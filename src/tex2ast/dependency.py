@@ -9,10 +9,10 @@ from typing import Optional
 GRAPHIC_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.pdf', '.eps', '.svg', '.tikz'}
 
 # Patterns for finding dependencies
-INCLUDE_PATTERN = re.compile(r'\\(?:include|input)\{([^}]+)\}')
-GRAPHICS_PATTERN = re.compile(r'\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}')
-BIBLIOGRAPHY_PATTERN = re.compile(r'\\(?:bibliography|addbibresource)\{([^}]+)\}')
-INCLUDEONLY_PATTERN = re.compile(r'\\includeonly\{([^}]+)\}')
+INCLUDE_PATTERN = re.compile(r'\\(?:include|input)\s*\{([^}]+)\}')
+GRAPHICS_PATTERN = re.compile(r'\\includegraphics\s*(?:\[[^\]]*\])?\s*\{([^}]+)\}')
+BIBLIOGRAPHY_PATTERN = re.compile(r'\\(?:bibliography|addbibresource)\s*\{([^}]+)\}')
+INCLUDEONLY_PATTERN = re.compile(r'\\includeonly\s*\{([^}]+)\}')
 
 
 def find_dependencies(content: str, base_dir: Path) -> dict[str, list[Path]]:
@@ -79,13 +79,21 @@ def find_dependencies(content: str, base_dir: Path) -> dict[str, list[Path]]:
 def collect_all_dependencies(
     main_file: Path,
     visited: set[Path] | None = None,
+    root_dir: Path | None = None,
 ) -> dict[str, set[Path]]:
     """Recursively collect all dependencies starting from main file.
+
+    Args:
+        main_file: The .tex file to process
+        visited: Set of already visited files (for cycle detection)
+        root_dir: Root directory (main file's dir). Relative paths always resolve from here.
 
     Returns dict with keys: 'tex', 'graphics', 'bib'
     """
     if visited is None:
         visited = set()
+    if root_dir is None:
+        root_dir = main_file.parent
 
     main_file = main_file.resolve()
     if main_file in visited:
@@ -99,13 +107,13 @@ def collect_all_dependencies(
     except Exception:
         return all_deps
 
-    base_dir = main_file.parent
-    deps = find_dependencies(content, base_dir)
+    # Always use root_dir for resolving relative paths
+    deps = find_dependencies(content, root_dir)
 
     # Process tex files recursively
     for tex_file in deps['tex']:
         all_deps['tex'].add(tex_file)
-        sub_deps = collect_all_dependencies(tex_file, visited)
+        sub_deps = collect_all_dependencies(tex_file, visited, root_dir)
         for key in all_deps:
             all_deps[key].update(sub_deps[key])
 
@@ -149,19 +157,19 @@ def format_dependencies(main_file: Path, deps: dict[str, set[Path]]) -> str:
     if deps['tex']:
         lines.append(f"\nTeX files ({len(deps['tex'])}):")
         for f in sorted(deps['tex']):
-            exists = "  " if f.exists() else " !"
+            exists = "  " if f.exists() else " ! "
             lines.append(f"  {exists}{f}")
 
     if deps['graphics']:
         lines.append(f"\nGraphics ({len(deps['graphics'])}):")
         for f in sorted(deps['graphics']):
-            exists = "  " if f.exists() else " !"
+            exists = "  " if f.exists() else " ! "
             lines.append(f"  {exists}{f}")
 
     if deps['bib']:
         lines.append(f"\nBibliography ({len(deps['bib'])}):")
         for f in sorted(deps['bib']):
-            exists = "  " if f.exists() else " !"
+            exists = "  " if f.exists() else " ! "
             lines.append(f"  {exists}{f}")
 
     total = sum(len(v) for v in deps.values())

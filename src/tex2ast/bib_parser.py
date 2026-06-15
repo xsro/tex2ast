@@ -260,25 +260,37 @@ def extract_cited_entries(
     return cited_entries
 
 
-def _collect_cited_keys(main_file: Path, content: str) -> set[str]:
-    """Collect all cited keys from main file and included files."""
+def _collect_cited_keys(
+    main_file: Path,
+    content: str,
+    root_dir: Path | None = None,
+) -> set[str]:
+    """Collect all cited keys from main file and included files.
+
+    Args:
+        main_file: Current .tex file being processed
+        content: Content of the file
+        root_dir: Root directory (main file's dir). Relative paths always resolve from here.
+    """
     from .dependency import INCLUDE_PATTERN
+
+    if root_dir is None:
+        root_dir = main_file.parent
 
     keys = extract_cited_keys(content)
 
-    # Also process included files
-    base_dir = main_file.parent
+    # Also process included files - always use root_dir for resolving paths
     for match in INCLUDE_PATTERN.finditer(content):
         file_ref = match.group(1).strip()
         if not file_ref.endswith('.tex'):
             file_ref += '.tex'
-        inc_path = base_dir / file_ref
+        inc_path = root_dir / file_ref
         if inc_path.exists():
             try:
                 inc_content = inc_path.read_text(encoding='utf-8')
                 keys.update(extract_cited_keys(inc_content))
-                # Recursively process nested includes
-                keys.update(_collect_cited_keys(inc_path, inc_content))
+                # Recursively process nested includes, passing root_dir
+                keys.update(_collect_cited_keys(inc_path, inc_content, root_dir))
             except Exception:
                 pass
 
@@ -290,7 +302,7 @@ def _find_bib_files(content: str, base_dir: Path) -> list[Path]:
     bib_files = []
 
     # Match \bibliography{file1, file2}
-    bib_pattern = re.compile(r'\\bibliography\{([^}]+)\}')
+    bib_pattern = re.compile(r'\\bibliography\s*\{([^}]+)\}')
     for match in bib_pattern.finditer(content):
         refs = match.group(1)
         for ref in refs.split(','):
@@ -303,7 +315,7 @@ def _find_bib_files(content: str, base_dir: Path) -> list[Path]:
                     bib_files.append(bib_path)
 
     # Also check \addbibresource
-    addbib_pattern = re.compile(r'\\addbibresource\{([^}]+)\}')
+    addbib_pattern = re.compile(r'\\addbibresource\s*\{([^}]+)\}')
     for match in addbib_pattern.finditer(content):
         ref = match.group(1).strip()
         if ref:

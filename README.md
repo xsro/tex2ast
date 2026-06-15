@@ -8,6 +8,7 @@ LaTeX to AST converter with XeLaTeX support, roundtrip conversion, and utility c
 - **Roundtrip conversion**: tex -> json -> tex produces identical output
 - **changes package**: Strip `\added`, `\deleted`, `\replaced` markup to generate old/new versions
 - **Dependency analysis**: Find all included/input/graphics files, clean unreferenced files
+- **BibTeX extraction**: Export cited bib entries to a new file
 - Full XeLaTeX syntax support (CJK, math, tables, figures, etc.)
 
 ## Installation
@@ -25,20 +26,13 @@ uv pip install -e .
 ### `tex2ast ast` - Convert LaTeX to AST JSON
 
 ```bash
-# Basic usage
 tex2ast ast -i document.tex -o document.json
-
-# Pretty print
 tex2ast ast -i document.tex -o document.json --pretty
 ```
 
 ### `tex2ast tex` - Convert AST JSON back to LaTeX
 
 ```bash
-# If JSON contains 'source' field, outputs original source (perfect roundtrip)
-tex2ast tex -i document.json -o document.tex
-
-# Otherwise serializes from AST
 tex2ast tex -i document.json -o document.tex
 ```
 
@@ -56,14 +50,9 @@ Supports `\added`, `\deleted`, `\replaced`, `\comment`, `\highlight` commands.
 Recursively processes `\include` and `\input` files.
 
 ```bash
-# Generate new version (accept all changes)
-tex2ast remove-changes -i document.tex --new
-
-# Generate old version (reject all changes)
-tex2ast remove-changes -i document.tex --old
-
-# Apply changes to file(s) in place
-tex2ast remove-changes -i document.tex --new --run
+tex2ast remove-changes -i document.tex --new          # new version
+tex2ast remove-changes -i document.tex --old           # old version
+tex2ast remove-changes -i document.tex --new --run     # apply in place
 ```
 
 | Command | `--new` | `--old` |
@@ -77,15 +66,31 @@ tex2ast remove-changes -i document.tex --new --run
 ### `tex2ast dependency` - Analyze file dependencies
 
 ```bash
-# List all dependencies
-tex2ast dependency -i document.tex
-
-# Find unreferenced files in a directory
-tex2ast dependency -i document.tex --clean_dir ./figures
-
-# Delete unreferenced files
-tex2ast dependency -i document.tex --clean_dir ./figures --run
+tex2ast dependency -i document.tex                              # list dependencies
+tex2ast dependency -i document.tex --clean_dir ./figures        # find unreferenced files
+tex2ast dependency -i document.tex --clean_dir ./figures --run  # delete unreferenced
 ```
+
+Output:
+- `!` marks files that are referenced but missing
+- `--clean_dir` lists files in the directory that are NOT referenced
+- `--run` deletes unreferenced files
+
+### `tex2ast extract-bib` - Extract cited bib entries
+
+```bash
+tex2ast extract-bib -i document.tex -o cited.bib
+tex2ast extract-bib -i document.tex                         # output to stdout
+tex2ast extract-bib -i document.tex -o cited.bib --bib refs.bib
+```
+
+- Auto-detects bib files from `\bibliography` and `\addbibresource`
+- Parses `\cite`, `\citep`, `\citet`, `\autocite`, `\parencite`, `\textcite`, `\nocite`, etc.
+- Recursively processes `\include`/`\input` for citations
+
+## Path Resolution
+
+Relative paths in LaTeX are always resolved relative to the **main .tex file's directory**, regardless of where the referencing file is located. All commands follow this rule.
 
 ## JSON Output Format
 
@@ -109,8 +114,6 @@ Each AST node includes position info:
   "source": "\\documentclass{article}..."
 }
 ```
-
-The `source` field stores original LaTeX text for perfect roundtrip.
 
 ## Supported LaTeX Features
 
@@ -137,6 +140,7 @@ tex2ast/
 │   ├── serializer.py     # AST to LaTeX serializer
 │   ├── remove_changes.py # changes package remover
 │   ├── dependency.py     # Dependency analyzer
+│   ├── bib_parser.py     # BibTeX parser
 │   └── cli.py            # Command-line interface
 ├── pyproject.toml
 └── README.md
