@@ -6,16 +6,30 @@ from enum import Enum
 
 
 class MathMode(Enum):
-    INLINE = "inline"       # $...$
-    DISPLAY = "display"     # $$...$$ or \[...\]
-    TEXT = "text"           # \(...\)
-    ENVIRONMENT = "environment"  # \begin{equation} etc.
+    INLINE = "inline"
+    DISPLAY = "display"
+    TEXT = "text"
+    ENVIRONMENT = "environment"
+
+
+@dataclass
+class SourcePos:
+    """Source position info."""
+    line: int = 0
+    column: int = 0
+    offset: int = 0
+
+@dataclass
+class SourceRange:
+    """Source range (start and end positions)."""
+    start: SourcePos = field(default_factory=SourcePos)
+    end: SourcePos = field(default_factory=SourcePos)
 
 
 @dataclass
 class ASTNode:
     """Base AST node."""
-    pass
+    pos: Optional[SourceRange] = field(default=None, kw_only=True)
 
 
 @dataclass
@@ -23,51 +37,52 @@ class LatexAST:
     """Root AST node."""
     children: list[ASTNode] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
+    source: str = ""
 
 
 @dataclass
 class Text(ASTNode):
     """Plain text content."""
-    content: str
+    content: str = ""
 
 
 @dataclass
 class Command(ASTNode):
-    """LaTeX command: \\commandname[opt]{arg1}{arg2}"""
-    name: str
+    """LaTeX command."""
+    name: str = ""
     arguments: list[ASTNode] = field(default_factory=list)
     optional_arguments: list[ASTNode] = field(default_factory=list)
-    star: bool = False  # \\command*
+    star: bool = False
 
 
 @dataclass
 class Environment(ASTNode):
-    """LaTeX environment: \\begin{name}...\\end{name}"""
-    name: str
+    """LaTeX environment."""
+    name: str = ""
     arguments: list[ASTNode] = field(default_factory=list)
     optional_arguments: list[ASTNode] = field(default_factory=list)
     children: list[ASTNode] = field(default_factory=list)
-    star: bool = False  # \\begin*{name}
+    star: bool = False
 
 
 @dataclass
 class MathEnvironment(ASTNode):
-    """Math environment: \begin{equation} etc."""
-    name: str
+    """Math environment."""
+    name: str = ""
     children: list[ASTNode] = field(default_factory=list)
     mode: MathMode = MathMode.ENVIRONMENT
 
 
 @dataclass
 class InlineMath(ASTNode):
-    """Inline math: $...$ or \\(...\\)"""
+    """Inline math: $...$"""
     children: list[ASTNode] = field(default_factory=list)
     delimiter: str = "$"
 
 
 @dataclass
 class DisplayMath(ASTNode):
-    """Display math: $$...$$ or \\[...\\]"""
+    """Display math: $$...$$"""
     children: list[ASTNode] = field(default_factory=list)
     delimiter: str = "$$"
 
@@ -87,89 +102,89 @@ class OptionalGroup(ASTNode):
 @dataclass
 class Comment(ASTNode):
     """Comment: %..."""
-    content: str
+    content: str = ""
     inline: bool = False
 
 
 @dataclass
 class SpecialChar(ASTNode):
-    """Special character: #, $, %, &, _, {, }, ~, ^"""
-    char: str
+    """Special character."""
+    char: str = ""
     escaped: bool = False
 
 
 @dataclass
 class Superscript(ASTNode):
     """Superscript: ^"""
-    content: ASTNode
+    content: ASTNode = field(default=None)
 
 
 @dataclass
 class Subscript(ASTNode):
     """Subscript: _"""
-    content: ASTNode
+    content: ASTNode = field(default=None)
 
 
 @dataclass
 class Accent(ASTNode):
-    """Accent command: \\', \\", \\^, etc."""
-    accent_type: str
-    content: ASTNode
+    """Accent command."""
+    accent_type: str = ""
+    content: ASTNode = field(default=None)
 
 
 @dataclass
 class FontCommand(ASTNode):
-    """Font command: \textbf, \textit, etc."""
-    font_type: str
-    content: ASTNode
+    """Font command."""
+    font_type: str = ""
+    content: ASTNode = field(default=None)
 
 
 @dataclass
 class Length(ASTNode):
     """Length value: 1cm, 2pt, etc."""
-    value: float
-    unit: str
+    value: float = 0.0
+    unit: str = ""
 
 
 @dataclass
 class Counter(ASTNode):
-    """Counter: \\value{counter}"""
-    name: str
+    """Counter."""
+    name: str = ""
 
 
 @dataclass
 class Reference(ASTNode):
-    """Reference: \\ref{label}, \\pageref{label}"""
-    ref_type: str
-    label: str
+    """Reference."""
+    ref_type: str = ""
+    label: str = ""
 
 
 @dataclass
 class Citation(ASTNode):
-    """Citation: \\cite{key}"""
-    keys: list[str]
+    """Citation."""
+    keys: list[str] = field(default_factory=list)
     optional: Optional[str] = None
 
 
 @dataclass
 class Footnote(ASTNode):
-    """Footnote: \\footnote{text}"""
-    content: ASTNode
+    """Footnote."""
+    content: ASTNode = field(default=None)
     number: Optional[int] = None
 
 
 @dataclass
 class Hyperlink(ASTNode):
-    """Hyperlink: \\href{url}{text} or \\url{url}"""
-    url: str
+    """Hyperlink."""
+    url: str = ""
     text: Optional[ASTNode] = None
     href_type: str = "href"
 
 
 @dataclass
 class Graphics(ASTNode):
-    """Graphics: \\includegraphics[opts]{file}"""
-    filename: str
+    """Graphics."""
+    filename: str = ""
     options: list[ASTNode] = field(default_factory=list)
 
 
@@ -194,8 +209,8 @@ class TableCell(ASTNode):
 
 @dataclass
 class List(ASTNode):
-    """List environment: itemize, enumerate, description."""
-    list_type: str
+    """List environment."""
+    list_type: str = ""
     items: list[ASTNode] = field(default_factory=list)
 
 
@@ -208,17 +223,17 @@ class ListItem(ASTNode):
 
 @dataclass
 class Section(ASTNode):
-    """Section command: \\section, \\subsection, etc."""
-    level: int
-    title: ASTNode
+    """Section command."""
+    level: int = 0
+    title: ASTNode = field(default=None)
     number: Optional[str] = None
     star: bool = False
 
 
 @dataclass
 class Float(ASTNode):
-    """Float environment: figure, table."""
-    float_type: str
+    """Float environment."""
+    float_type: str = ""
     children: list[ASTNode] = field(default_factory=list)
     caption: Optional[ASTNode] = None
     label: Optional[str] = None
@@ -227,21 +242,21 @@ class Float(ASTNode):
 @dataclass
 class Caption(ASTNode):
     """Caption command."""
-    content: ASTNode
+    content: ASTNode = field(default=None)
     short_caption: Optional[ASTNode] = None
 
 
 @dataclass
 class Label(ASTNode):
     """Label command."""
-    name: str
+    name: str = ""
 
 
 @dataclass
 class NewCommand(ASTNode):
-    """New command definition: \\newcommand{name}[args]{def}"""
-    name: str
-    definition: ASTNode
+    """New command definition."""
+    name: str = ""
+    definition: ASTNode = field(default=None)
     num_args: int = 0
     default: Optional[ASTNode] = None
 
@@ -249,24 +264,24 @@ class NewCommand(ASTNode):
 @dataclass
 class NewEnvironment(ASTNode):
     """New environment definition."""
-    name: str
-    before: ASTNode
-    after: ASTNode
+    name: str = ""
+    before: ASTNode = field(default=None)
+    after: ASTNode = field(default=None)
     num_args: int = 0
     default: Optional[ASTNode] = None
 
 
 @dataclass
 class Package(ASTNode):
-    """Package loading: \\usepackage[opts]{pkg}"""
-    name: str
+    """Package loading."""
+    name: str = ""
     options: list[str] = field(default_factory=list)
 
 
 @dataclass
 class DocumentClass(ASTNode):
-    """Document class: \\documentclass[opts]{class}"""
-    name: str
+    """Document class."""
+    name: str = ""
     options: list[str] = field(default_factory=list)
 
 
@@ -278,12 +293,12 @@ class Paragraph(ASTNode):
 
 @dataclass
 class LineBreak(ASTNode):
-    """Line break: \\\\ or \\newline"""
+    """Line break."""
     pass
 
 
 @dataclass
 class Space(ASTNode):
     """Horizontal or vertical space."""
-    space_type: str  # hspace, vspace, quad, qquad, etc.
+    space_type: str = ""
     length: Optional[Length] = None

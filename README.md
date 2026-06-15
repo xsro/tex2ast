@@ -1,206 +1,147 @@
 # tex2ast
 
-LaTeX to AST converter with XeLaTeX support.
+LaTeX to AST converter with XeLaTeX support, roundtrip conversion, and utility commands.
 
 ## Features
 
-- Parse LaTeX files into Abstract Syntax Tree (AST)
-- Support for XeLaTeX syntax including:
-  - Commands and environments
-  - Math formulas (inline and display)
-  - Tables and figures
-  - Lists (itemize, enumerate, description)
-  - Cross-references and citations
-  - Hyperlinks and graphics
-  - Chinese typesetting (CJK/ctex)
-  - Special characters and escaping
-- Command-line interface
-- JSON output format
+- **LaTeX to AST**: Parse LaTeX files into Abstract Syntax Tree with position info
+- **Roundtrip conversion**: tex -> json -> tex produces identical output
+- **changes package**: Strip `\added`, `\deleted`, `\replaced` markup to generate old/new versions
+- **Dependency analysis**: Find all included/input/graphics files, clean unreferenced files
+- Full XeLaTeX syntax support (CJK, math, tables, figures, etc.)
 
 ## Installation
 
 ```bash
-# Clone the repository
 git clone <repository-url>
 cd tex2ast
 
-# Create virtual environment and install
 uv venv
 uv pip install -e .
 ```
 
-## Usage
+## Commands
 
-### Basic usage
-
-```bash
-# Convert LaTeX file to JSON
-ast --input document.tex --output document.json
-
-# Short form
-ast -i document.tex -o document.json
-
-# Pretty print JSON
-ast -i document.tex -o document.json --pretty
-
-# Specify encoding
-ast -i document.tex -o document.json --encoding gbk
-```
-
-### Using stdin/stdout
+### `tex2ast ast` - Convert LaTeX to AST JSON
 
 ```bash
-# Read from stdin, write to stdout
-cat document.tex | ast
+# Basic usage
+tex2ast ast -i document.tex -o document.json
 
-# Read from stdin, write to file
-cat document.tex | ast -o document.json
-
-# Read from file, write to stdout
-ast -i document.tex
+# Pretty print
+tex2ast ast -i document.tex -o document.json --pretty
 ```
 
-### Examples
+### `tex2ast tex` - Convert AST JSON back to LaTeX
 
 ```bash
-# Parse the example file
-ast -i example.tex -o example.json --pretty
+# If JSON contains 'source' field, outputs original source (perfect roundtrip)
+tex2ast tex -i document.json -o document.tex
 
-# View the output
-cat example.json
+# Otherwise serializes from AST
+tex2ast tex -i document.json -o document.tex
 ```
 
-## AST Node Types
+### Roundtrip
 
-The parser generates the following AST node types:
+```bash
+tex2ast ast -i document.tex -o document.json
+tex2ast tex -i document.json -o document.tex
+diff document.tex document.tex  # identical!
+```
 
-- **Document**: Root node containing all children
-- **Text**: Plain text content
-- **Command**: LaTeX commands with arguments
-- **Environment**: LaTeX environments
-- **MathEnvironment**: Math environments (equation, align, etc.)
-- **InlineMath**: Inline math ($...$)
-- **DisplayMath**: Display math ($$...$$ or \[...\])
-- **Group**: Groups ({...})
-- **OptionalGroup**: Optional groups ([...])
-- **Section**: Section commands
-- **List**: List environments
-- **ListItem**: List items
-- **Table**: Table environments
-- **TableRow**: Table rows
-- **TableCell**: Table cells
-- **Float**: Float environments (figure, table)
-- **Graphics**: Includegraphics commands
-- **Hyperlink**: Hyperref commands
-- **Citation**: Citation commands
-- **Reference**: Cross-reference commands
-- **Footnote**: Footnote commands
-- **Label**: Label commands
-- **Caption**: Caption commands
-- **Package**: Usepackage commands
-- **DocumentClass**: Documentclass command
-- **Comment**: Comments
-- **SpecialChar**: Special characters
-- And more...
+### `tex2ast remove-changes` - Strip changes package markup
 
-## Supported LaTeX Features
+Supports `\added`, `\deleted`, `\replaced`, `\comment`, `\highlight` commands.
+Recursively processes `\include` and `\input` files.
 
-### Document Structure
-- \documentclass, \usepackage
-- \title, \author, \date
-- \maketitle
-- \section, \subsection, \subsubsection
-- \paragraph, \subparagraph
+```bash
+# Generate new version (accept all changes)
+tex2ast remove-changes -i document.tex --new
 
-### Text Formatting
-- \textbf, \textit, \texttt, \textsl, \textsc
-- \textrm, \textsf, \underline, \emph
-- Font size commands
+# Generate old version (reject all changes)
+tex2ast remove-changes -i document.tex --old
 
-### Math
-- Inline math: $...$, \(...\)
-- Display math: $$...$$, \[...\]
-- Math environments: equation, align, gather, multline, etc.
-- Matrices: matrix, pmatrix, bmatrix, vmatrix, etc.
-- Subscripts and superscripts
+# Apply changes to file(s) in place
+tex2ast remove-changes -i document.tex --new --run
+```
 
-### Environments
-- itemize, enumerate, description
-- tabular, tabularx, longtable
-- figure, table
-- quote, quotation, verse
-- center, flushleft, flushright
-- And many more...
+| Command | `--new` | `--old` |
+|---------|---------|---------|
+| `\added{text}` | keep text | remove |
+| `\deleted{text}` | remove | keep text |
+| `\replaced{new}{old}` | use new | use old |
+| `\comment{text}` | remove | remove |
+| `\highlight{text}` | keep text | keep text |
 
-### Cross-references
-- \label, \ref, \pageref, \eqref
-- \cite, \nocite
-- \footnote
+### `tex2ast dependency` - Analyze file dependencies
 
-### Graphics and Links
-- \includegraphics
-- \href, \url
+```bash
+# List all dependencies
+tex2ast dependency -i document.tex
 
-### Special Characters
-- Escaped characters: \#, \$, \%, \&, \_, \{, \}, \~, \^
-- Unicode support (XeLaTeX)
+# Find unreferenced files in a directory
+tex2ast dependency -i document.tex --clean_dir ./figures
 
-## Output Format
+# Delete unreferenced files
+tex2ast dependency -i document.tex --clean_dir ./figures --run
+```
 
-The output is a JSON object with the following structure:
+## JSON Output Format
+
+Each AST node includes position info:
 
 ```json
 {
   "type": "LatexAST",
   "children": [
     {
-      "type": "DocumentClass",
-      "name": "article",
-      "options": ["12pt", "a4paper"]
-    },
-    {
-      "type": "Package",
-      "name": "ctex",
-      "options": ["UTF8"]
-    },
-    ...
+      "type": "Command",
+      "pos": {
+        "start": {"line": 1, "column": 15, "offset": 0},
+        "end": {"line": 1, "column": 38, "offset": 7}
+      },
+      "name": "documentclass",
+      "arguments": [...]
+    }
   ],
-  "metadata": {}
+  "metadata": {},
+  "source": "\\documentclass{article}..."
 }
 ```
 
-## Development
+The `source` field stores original LaTeX text for perfect roundtrip.
 
-### Project Structure
+## Supported LaTeX Features
+
+- Document structure: `\documentclass`, `\usepackage`, sections
+- Text formatting: `\textbf`, `\textit`, `\emph`, etc.
+- Math: inline `$...$`, display `$$...$$`, environments (equation, align, matrix, etc.)
+- Environments: itemize, enumerate, tabular, figure, table, quote, etc.
+- Cross-references: `\label`, `\ref`, `\cite`, `\footnote`
+- Graphics: `\includegraphics`
+- Links: `\href`, `\url`
+- Special characters: `\#`, `\$`, `\%`, `\&`, `\_`, `\{`, `\}`, `\~`, `\^`
+- Chinese typesetting (ctex)
+- Verbatim environments (lstlisting, verbatim)
+
+## Project Structure
 
 ```
 tex2ast/
-├── src/
-│   └── tex2ast/
-│       ├── __init__.py
-│       ├── ast_nodes.py    # AST node definitions
-│       ├── lexer.py        # LaTeX lexer
-│       ├── parser.py       # LaTeX parser
-│       └── cli.py          # Command-line interface
+├── src/tex2ast/
+│   ├── __init__.py
+│   ├── ast_nodes.py      # AST node definitions with position info
+│   ├── lexer.py          # LaTeX lexer
+│   ├── parser.py         # LaTeX parser
+│   ├── serializer.py     # AST to LaTeX serializer
+│   ├── remove_changes.py # changes package remover
+│   ├── dependency.py     # Dependency analyzer
+│   └── cli.py            # Command-line interface
 ├── pyproject.toml
-├── README.md
-└── example.tex
-```
-
-### Running Tests
-
-```bash
-# Install development dependencies
-uv pip install -e ".[dev]"
-
-# Run tests
-pytest
+└── README.md
 ```
 
 ## License
 
 MIT License
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.

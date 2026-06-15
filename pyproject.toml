@@ -13,4 +13,4 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project.scripts]
-ast = "tex2ast.cli:main"
+tex2ast = "tex2ast.cli:main"

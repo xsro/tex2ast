@@ -9,7 +9,36 @@ import click
 
 from .lexer import LatexLexer
 from .parser import LatexParser
-from .ast_nodes import LatexAST, ASTNode
+from .serializer import LatexSerializer
+from .ast_nodes import LatexAST, ASTNode, SourcePos, SourceRange
+from .remove_changes import process_file, show_diff
+from .dependency import collect_all_dependencies, find_unreferenced_files, format_dependencies
+
+
+# --- AST <-> dict conversion ---
+
+def _pos_to_dict(pos) -> Optional[dict]:
+    if pos is None:
+        return None
+    if isinstance(pos, SourceRange):
+        return {
+            'start': {'line': pos.start.line, 'column': pos.start.column, 'offset': pos.start.offset},
+            'end': {'line': pos.end.line, 'column': pos.end.column, 'offset': pos.end.offset},
+        }
+    return None
+
+
+def _dict_to_pos(d) -> Optional[SourceRange]:
+    if d is None:
+        return None
+    if isinstance(d, dict) and 'start' in d and 'end' in d:
+        s = d['start']
+        e = d['end']
+        return SourceRange(
+            start=SourcePos(line=s.get('line', 0), column=s.get('column', 0), offset=s.get('offset', 0)),
+            end=SourcePos(line=e.get('line', 0), column=e.get('column', 0), offset=e.get('offset', 0)),
+        )
+    return None
 
 
 def ast_to_dict(node) -> dict:
@@ -21,17 +50,22 @@ def ast_to_dict(node) -> dict:
         return node
 
     if isinstance(node, LatexAST):
-        return {
+        result = {
             'type': 'LatexAST',
             'children': [ast_to_dict(child) for child in node.children],
             'metadata': node.metadata,
         }
+        if node.source:
+            result['source'] = node.source
+        return result
 
-    # Get all fields from the dataclass
     result = {'type': node.__class__.__name__}
 
+    if node.pos is not None:
+        result['pos'] = _pos_to_dict(node.pos)
+
     for field_name, field_value in node.__dict__.items():
-        if field_name.startswith('_'):
+        if field_name.startswith('_') or field_name == 'pos':
             continue
 
         if isinstance(field_value, list):
@@ -48,7 +82,69 @@ def ast_to_dict(node) -> dict:
     return result
 
 
-@click.command()
+def dict_to_ast(d) -> ASTNode:
+    """Convert dictionary to AST node."""
+    if d is None:
+        return None
+
+    if isinstance(d, (str, int, float, bool)):
+        return d
+
+    if not isinstance(d, dict):
+        return d
+
+    node_type = d.get('type', '')
+
+    if node_type == 'LatexAST':
+        ast = LatexAST(
+            children=[dict_to_ast(c) for c in d.get('children', [])],
+            metadata=d.get('metadata', {}),
+            source=d.get('source', ''),
+        )
+        return ast
+
+    # Import all node types
+    from . import ast_nodes
+
+    cls = getattr(ast_nodes, node_type, None)
+    if cls is None or not isinstance(cls, type):
+        return None
+
+    pos = _dict_to_pos(d.get('pos'))
+
+    kwargs = {}
+    if pos is not None:
+        kwargs['pos'] = pos
+
+    for field_name in d:
+        if field_name in ('type', 'pos'):
+            continue
+
+        field_value = d[field_name]
+
+        if isinstance(field_value, list):
+            kwargs[field_name] = [dict_to_ast(item) for item in field_value]
+        elif isinstance(field_value, dict) and 'type' in field_value:
+            kwargs[field_name] = dict_to_ast(field_value)
+        else:
+            kwargs[field_name] = field_value
+
+    try:
+        return cls(**kwargs)
+    except TypeError:
+        # Fallback: try with just the basic fields
+        return cls(**{k: v for k, v in kwargs.items() if k != 'pos'})
+
+
+# --- CLI ---
+
+@click.group()
+def cli():
+    """tex2ast - LaTeX to AST converter with roundtrip support."""
+    pass
+
+
+@cli.command('ast')
 @click.option('--input', '-i', 'input_file',
               type=click.Path(exists=True),
               help='Input LaTeX file path')
@@ -56,23 +152,20 @@ def ast_to_dict(node) -> dict:
               type=click.Path(),
               help='Output JSON file path')
 @click.option('--pretty', '-p',
-              is_flag=True,
-              default=False,
+              is_flag=True, default=False,
               help='Pretty print JSON output')
 @click.option('--encoding', '-e',
               default='utf-8',
               help='Input file encoding')
-def main(input_file: Optional[str], output_file: Optional[str],
-         pretty: bool, encoding: str):
-    """Convert LaTeX file to AST in JSON format.
+def tex_to_ast(input_file: Optional[str], output_file: Optional[str],
+               pretty: bool, encoding: str):
+    """Convert LaTeX to AST JSON.
 
     Examples:
 
-        ast --input document.tex --output document.json
+        tex2ast ast --input document.tex --output document.json
 
-        ast -i document.tex -o document.json --pretty
-
-        cat document.tex | ast -o document.json
+        tex2ast ast -i document.tex -o document.json --pretty
     """
     # Read input
     if input_file:
@@ -83,10 +176,8 @@ def main(input_file: Optional[str], output_file: Optional[str],
             click.echo(f"Error reading input file: {e}", err=True)
             sys.exit(1)
     else:
-        # Read from stdin
         if sys.stdin.isatty():
-            click.echo("Error: No input file specified and no stdin input", err=True)
-            click.echo("Use --input to specify a file or pipe input via stdin", err=True)
+            click.echo("Error: No input file specified", err=True)
             sys.exit(1)
         latex_content = sys.stdin.read()
 
@@ -97,8 +188,8 @@ def main(input_file: Optional[str], output_file: Optional[str],
 
         parser = LatexParser(tokens)
         ast = parser.parse()
+        ast.source = latex_content  # Store original source for roundtrip
 
-        # Convert to dict
         result = ast_to_dict(ast)
 
     except Exception as e:
@@ -113,13 +204,223 @@ def main(input_file: Optional[str], output_file: Optional[str],
         if output_file:
             output_path = Path(output_file)
             output_path.write_text(json_output, encoding='utf-8')
-            click.echo(f"AST written to {output_file}")
         else:
             click.echo(json_output)
 
     except Exception as e:
         click.echo(f"Error writing output: {e}", err=True)
         sys.exit(1)
+
+
+@cli.command('tex')
+@click.option('--input', '-i', 'input_file',
+              type=click.Path(exists=True),
+              help='Input JSON file path')
+@click.option('--output', '-o', 'output_file',
+              type=click.Path(),
+              help='Output LaTeX file path')
+@click.option('--encoding', '-e',
+              default='utf-8',
+              help='Output file encoding')
+def ast_to_tex(input_file: Optional[str], output_file: Optional[str],
+               encoding: str):
+    """Convert AST JSON back to LaTeX.
+
+    If the JSON contains a 'source' field, the original source is output directly
+    for perfect roundtrip fidelity. Otherwise, the AST is serialized.
+
+    Examples:
+
+        tex2ast tex --input document.json --output document.tex
+
+        tex2ast tex -i document.json -o document.tex
+    """
+    # Read input
+    if input_file:
+        try:
+            input_path = Path(input_file)
+            json_content = input_path.read_text(encoding='utf-8')
+        except Exception as e:
+            click.echo(f"Error reading input file: {e}", err=True)
+            sys.exit(1)
+    else:
+        if sys.stdin.isatty():
+            click.echo("Error: No input file specified", err=True)
+            sys.exit(1)
+        json_content = sys.stdin.read()
+
+    # Parse JSON
+    try:
+        data = json.loads(json_content)
+    except json.JSONDecodeError as e:
+        click.echo(f"Error parsing JSON: {e}", err=True)
+        sys.exit(1)
+
+    # If source is present, use it directly for perfect roundtrip
+    source = data.get('source', '')
+    if source:
+        latex_output = source
+    else:
+        # Deserialize AST and serialize back to LaTeX
+        try:
+            ast = dict_to_ast(data)
+            if not isinstance(ast, LatexAST):
+                click.echo("Error: Root node must be LatexAST", err=True)
+                sys.exit(1)
+
+            serializer = LatexSerializer()
+            latex_output = serializer.serialize(ast)
+
+        except Exception as e:
+            click.echo(f"Error serializing AST: {e}", err=True)
+            sys.exit(1)
+
+    # Output LaTeX (use newline='' to preserve exact line endings for roundtrip)
+    try:
+        if output_file:
+            output_path = Path(output_file)
+            output_path.write_text(latex_output, encoding=encoding, newline='')
+        else:
+            click.echo(latex_output, nl=False)
+
+    except Exception as e:
+        click.echo(f"Error writing output: {e}", err=True)
+        sys.exit(1)
+
+
+def main():
+    cli()
+
+
+@cli.command('remove-changes')
+@click.option('--input', '-i', 'input_file',
+              type=click.Path(exists=True),
+              required=True,
+              help='Input LaTeX file path')
+@click.option('--new', 'mode_new',
+              is_flag=True, default=True,
+              help='Generate new version (accept all changes)')
+@click.option('--old', 'mode_old',
+              is_flag=True, default=False,
+              help='Generate old version (reject all changes)')
+@click.option('--run', 'apply',
+              is_flag=True, default=False,
+              help='Apply changes to file(s) in place')
+def remove_changes(input_file: str, mode_new: bool, mode_old: bool, apply: bool):
+    """Remove changes package markup from LaTeX files.
+
+    Supports \\added, \\deleted, \\replaced, \\comment, \\highlight commands.
+    Recursively processes \\include and \\input files.
+
+    Examples:
+
+        tex2ast remove-changes -i document.tex --new
+
+        tex2ast remove-changes -i document.tex --old
+
+        tex2ast remove-changes -i document.tex --new --run
+    """
+    from pathlib import Path
+
+    mode = 'old' if mode_old else 'new'
+    input_path = Path(input_file).resolve()
+
+    # Process file
+    results = process_file(input_path, mode, apply)
+
+    if not results:
+        click.echo("No files processed.", err=True)
+        sys.exit(1)
+
+    if apply:
+        click.echo(f"Processed {len(results)} file(s):")
+        for file_path in results:
+            click.echo(f"  - {file_path}")
+    else:
+        # Show diff (dry run)
+        for file_path, processed in results.items():
+            try:
+                original = Path(file_path).read_text(encoding='utf-8')
+            except Exception:
+                continue
+
+            if original != processed:
+                diff = show_diff(original, processed, file_path)
+                click.echo(diff)
+                click.echo()
+
+        click.echo(f"Would process {len(results)} file(s). Use --run to apply changes.")
+
+
+@cli.command('dependency')
+@click.option('--input', '-i', 'input_file',
+              type=click.Path(exists=True),
+              required=True,
+              help='Input LaTeX main file')
+@click.option('--clean_dir',
+              type=click.Path(exists=True),
+              help='Directory to check for unreferenced files')
+@click.option('--run', 'apply',
+              is_flag=True, default=False,
+              help='Delete unreferenced files in clean_dir')
+def dependency(input_file: str, clean_dir: Optional[str], apply: bool):
+    """Analyze LaTeX file dependencies.
+
+    Lists all files included/input/used by the LaTeX document.
+    With --clean_dir, finds unreferenced files in that directory.
+
+    Examples:
+
+        tex2ast dependency -i document.tex
+
+        tex2ast dependency -i document.tex --clean_dir ./figures
+
+        tex2ast dependency -i document.tex --clean_dir ./figures --run
+    """
+    from pathlib import Path
+
+    input_path = Path(input_file).resolve()
+    deps = collect_all_dependencies(input_path)
+
+    # Print dependencies
+    click.echo(format_dependencies(input_path, deps))
+
+    # Clean directory mode
+    if clean_dir:
+        clean_path = Path(clean_dir).resolve()
+        if not clean_path.is_dir():
+            click.echo(f"\nError: {clean_dir} is not a directory", err=True)
+            sys.exit(1)
+
+        # Build set of all referenced files (including main file)
+        all_referenced = set()
+        all_referenced.add(input_path)
+        for key in deps:
+            all_referenced.update(deps[key])
+
+        # Find unreferenced files
+        unreferenced = find_unreferenced_files(clean_path, all_referenced)
+
+        if not unreferenced:
+            click.echo(f"\nNo unreferenced files in {clean_dir}")
+        else:
+            click.echo(f"\nUnreferenced files in {clean_dir} ({len(unreferenced)}):")
+            for f in unreferenced:
+                click.echo(f"  {f}")
+
+            if apply:
+                click.echo("\nDeleting unreferenced files...")
+                deleted = 0
+                for f in unreferenced:
+                    try:
+                        f.unlink()
+                        click.echo(f"  Deleted: {f}")
+                        deleted += 1
+                    except Exception as e:
+                        click.echo(f"  Error deleting {f}: {e}", err=True)
+                click.echo(f"\nDeleted {deleted} file(s)")
+            else:
+                click.echo(f"\nUse --run to delete these files")
 
 
 if __name__ == '__main__':
