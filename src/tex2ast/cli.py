@@ -14,6 +14,7 @@ from .ast_nodes import LatexAST, ASTNode, SourcePos, SourceRange
 from .remove_changes import process_file, show_diff
 from .dependency import collect_all_dependencies, find_unreferenced_files, format_dependencies
 from .bib_parser import extract_cited_entries, format_bib_entries, _find_bib_files
+from .build import run_build, expand_steps, TOOL_COMMANDS, STEP_ALIASES
 
 
 # --- AST <-> dict conversion ---
@@ -472,6 +473,64 @@ def extract_bib(input_file: str, output_file: str | None, bib_files: tuple[str])
         click.echo(f"Exported {len(entries)} entry(ies) to {output_file}")
     else:
         click.echo(bib_output, nl=False)
+
+
+@cli.command('build')
+@click.option('--input', '-i', 'input_file',
+              type=click.Path(exists=True),
+              required=True,
+              help='Input LaTeX main file')
+@click.option('--steps',
+              required=True,
+              help='Comma-separated build steps. Tools: xelatex, pdflatex, biber, bibtex. Aliases: pdf, xe, pdf2, xe2, pdf3, xe3, br, bt')
+@click.option('--log-dir',
+              type=click.Path(),
+              default='.',
+              help='Directory for log files (default: current directory)')
+def build(input_file: str, steps: str, log_dir: str):
+    """Run LaTeX build tools sequentially.
+
+    Compiles the LaTeX project using the specified tools in order.
+    Compilation output is saved to build.log, file I/O monitoring to build-io.log.
+
+    Examples:
+
+        tex2ast build -i main.tex --steps xelatex,biber,xelatex,xelatex
+
+        tex2ast build -i main.tex --steps xe,biber,xe2
+
+        tex2ast build -i main.tex --steps pdf2 --log-dir ./logs
+    """
+    input_path = Path(input_file).resolve()
+    log_path = Path(log_dir).resolve()
+
+    step_list = [s.strip() for s in steps.split(',') if s.strip()]
+    if not step_list:
+        click.echo("Error: no build steps provided", err=True)
+        sys.exit(1)
+
+    step_list = expand_steps(step_list)
+
+    valid = ', '.join(TOOL_COMMANDS)
+    aliases = ', '.join(STEP_ALIASES)
+    for s in step_list:
+        if s.lower() not in TOOL_COMMANDS:
+            click.echo(f"Error: unknown tool '{s}'. Valid tools: {valid}", err=True)
+            click.echo(f"Aliases: {aliases}", err=True)
+            sys.exit(1)
+
+    click.echo(f"Building {input_path.name} with {len(step_list)} step(s)")
+    click.echo(f"Logs: {log_path / 'build.log'}, {log_path / 'build-io.log'}")
+    click.echo()
+
+    success = run_build(input_path, step_list, log_path)
+
+    click.echo()
+    if success:
+        click.echo("Build completed successfully.")
+    else:
+        click.echo("Build finished with errors. Check build.log for details.")
+        sys.exit(1)
 
 
 if __name__ == '__main__':
