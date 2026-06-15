@@ -13,6 +13,7 @@ from .serializer import LatexSerializer
 from .ast_nodes import LatexAST, ASTNode, SourcePos, SourceRange
 from .remove_changes import process_file, show_diff
 from .dependency import collect_all_dependencies, find_unreferenced_files, format_dependencies
+from .bib_parser import extract_cited_entries, format_bib_entries, _find_bib_files
 
 
 # --- AST <-> dict conversion ---
@@ -421,6 +422,56 @@ def dependency(input_file: str, clean_dir: Optional[str], apply: bool):
                 click.echo(f"\nDeleted {deleted} file(s)")
             else:
                 click.echo(f"\nUse --run to delete these files")
+
+
+@cli.command('extract-bib')
+@click.option('--input', '-i', 'input_file',
+              type=click.Path(exists=True),
+              required=True,
+              help='Input LaTeX main file')
+@click.option('--output', '-o', 'output_file',
+              type=click.Path(),
+              help='Output .bib file path')
+@click.option('--bib',
+              'bib_files',
+              multiple=True,
+              type=click.Path(exists=True),
+              help='Bib files to search (auto-detect if not specified)')
+def extract_bib(input_file: str, output_file: str | None, bib_files: tuple[str]):
+    """Extract cited bib entries to a new file.
+
+    Finds all \\cite commands in the LaTeX project and exports matching
+    BibTeX entries to a new file.
+
+    Examples:
+
+        tex2ast extract-bib -i document.tex -o cited.bib
+
+        tex2ast extract-bib -i document.tex -o cited.bib --bib refs.bib
+    """
+    from pathlib import Path
+
+    input_path = Path(input_file).resolve()
+
+    # Resolve bib files
+    bib_paths = [Path(f).resolve() for f in bib_files] if bib_files else None
+
+    # Extract cited entries
+    entries = extract_cited_entries(input_path, bib_paths)
+
+    if not entries:
+        click.echo("No cited entries found.", err=True)
+        sys.exit(1)
+
+    # Format output
+    bib_output = format_bib_entries(entries)
+
+    if output_file:
+        output_path = Path(output_file)
+        output_path.write_text(bib_output, encoding='utf-8')
+        click.echo(f"Exported {len(entries)} entry(ies) to {output_file}")
+    else:
+        click.echo(bib_output, nl=False)
 
 
 if __name__ == '__main__':
