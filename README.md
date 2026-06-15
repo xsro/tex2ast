@@ -9,6 +9,7 @@ LaTeX to AST converter with XeLaTeX support, roundtrip conversion, and utility c
 - **changes package**: Strip `\added`, `\deleted`, `\replaced` markup to generate old/new versions
 - **Dependency analysis**: Find all included/input/graphics files, clean unreferenced files
 - **BibTeX extraction**: Export cited bib entries to a new file
+- **Build automation**: Run xelatex/pdflatex/biber/bibtex sequentially with file tracking
 - Full XeLaTeX syntax support (CJK, math, tables, figures, etc.)
 
 ## Installation
@@ -88,6 +89,32 @@ tex2ast extract-bib -i document.tex -o cited.bib --bib refs.bib
 - Parses `\cite`, `\citep`, `\citet`, `\autocite`, `\parencite`, `\textcite`, `\nocite`, etc.
 - Recursively processes `\include`/`\input` for citations
 
+### `tex2ast build` - Run LaTeX build tools
+
+```bash
+tex2ast build -i main.tex --steps xelatex,biber,xelatex,xelatex
+tex2ast build -i main.tex --steps xe,bt,xe2 --log-dir ./logs
+```
+
+Supported tools: `xelatex`, `pdflatex`, `biber`, `bibtex`
+
+Step aliases:
+
+| Alias | Expands to |
+|-------|-----------|
+| `pdf` | `pdflatex` |
+| `xe` | `xelatex` |
+| `pdf2` | `pdflatex, pdflatex` |
+| `xe2` | `xelatex, xelatex` |
+| `pdf3` | `pdflatex, pdflatex, pdflatex` |
+| `xe3` | `xelatex, xelatex, xelatex` |
+| `br` | `biber` |
+| `bt` | `bibtex` |
+
+Output:
+- `build.log` - Compilation output from each step
+- `build-io.log` - Summary of all files read during the build (absolute paths)
+
 ## Path Resolution
 
 Relative paths in LaTeX are always resolved relative to the **main .tex file's directory**, regardless of where the referencing file is located. All commands follow this rule.
@@ -141,6 +168,7 @@ tex2ast/
 │   ├── remove_changes.py # changes package remover
 │   ├── dependency.py     # Dependency analyzer
 │   ├── bib_parser.py     # BibTeX parser
+│   ├── build.py          # LaTeX build automation
 │   └── cli.py            # Command-line interface
 ├── pyproject.toml
 └── README.md
