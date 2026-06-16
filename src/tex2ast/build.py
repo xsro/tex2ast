@@ -2,7 +2,10 @@
 
 import os
 import re
+import shutil
 import subprocess
+import tempfile
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
@@ -173,6 +176,30 @@ def _parse_bibtex_log(log_path: Path, base_dir: Path) -> set[str]:
     return files
 
 
+def extract_zip_project(zip_path: Path, main_file: str) -> Path:
+    """Extract a zip archive to a temp directory and return the main .tex path.
+
+    Args:
+        zip_path: Path to the .zip file
+        main_file: Relative path to the main .tex file inside the zip
+
+    Returns:
+        Path to the extracted main .tex file
+    """
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    extract_dir = Path(tempfile.gettempdir()) / "tex2ast" / timestamp
+    extract_dir.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(zip_path, 'r') as zf:
+        zf.extractall(extract_dir)
+
+    tex_file = extract_dir / main_file
+    if not tex_file.exists():
+        raise FileNotFoundError(f"Main file '{main_file}' not found in zip archive")
+
+    return tex_file.resolve()
+
+
 def _build_tool_args(tool: str, tex_file: Path) -> list[str]:
     """Build command-line arguments for a tool."""
     cmd = TOOL_COMMANDS[tool]
@@ -182,11 +209,87 @@ def _build_tool_args(tool: str, tex_file: Path) -> list[str]:
         return [cmd, *TEX_FLAGS, str(tex_file)]
 
 
+# Extensions considered as LaTeX source (not packed)
+_LATEX_SOURCE_EXTS = {
+    '.tex', '.sty', '.cls', '.def', '.fd', '.cfg', '.ltx', '.clo',
+    '.bst', '.bbx', '.cbx', '.lbx', '.dbx',
+}
+
+# Extensions of packable dependency files
+_PACKABLE_EXTS = {
+    '.bib', '.pdf', '.png', '.jpg', '.jpeg', '.gif', '.bmp',
+    '.eps', '.svg', '.tikz', '.csv', '.dat', '.txt', '.json',
+}
+
+
+def pack_dependency_files(
+    tex_file: Path,
+    all_files: set[str],
+    output: Path,
+) -> int:
+    """Pack project dependency files into a zip archive.
+
+    Includes main .tex file, .bib, and non-LaTeX files under the project directory.
+    Excludes TeX system files (texmf-dist).
+
+    Args:
+        tex_file: Path to main .tex file
+        all_files: Set of absolute file paths from build
+        output: Output zip file path
+
+    Returns:
+        Number of files packed
+    """
+    base_dir = tex_file.parent
+    main_tex = tex_file.resolve()
+
+    packable = []
+    seen = set()
+
+    # Always include the main .tex file
+    if main_tex.exists():
+        packable.append(main_tex)
+        seen.add(str(main_tex))
+
+    # Include other .tex files from the project (not texmf)
+    for fpath_str in all_files:
+        fpath = Path(fpath_str)
+
+        if 'texmf' in str(fpath).lower():
+            continue
+
+        try:
+            fpath.resolve().relative_to(base_dir.resolve())
+        except ValueError:
+            continue
+
+        resolved = str(fpath.resolve())
+        if resolved in seen:
+            continue
+
+        if fpath.suffix.lower() in _PACKABLE_EXTS or fpath.suffix.lower() in _LATEX_SOURCE_EXTS:
+            packable.append(fpath)
+            seen.add(resolved)
+
+    if not packable:
+        return 0
+
+    packable.sort()
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(output, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for fpath in packable:
+            arcname = fpath.resolve().relative_to(base_dir.resolve())
+            zf.write(fpath, arcname)
+
+    return len(packable)
+
+
 def run_build(
     tex_file: Path,
     steps: list[str],
     log_dir: Path,
-) -> bool:
+) -> tuple[bool, set[str]]:
     """Run LaTeX build steps sequentially.
 
     Args:
@@ -195,7 +298,7 @@ def run_build(
         log_dir: Directory for log files
 
     Returns:
-        True if all steps succeeded, False otherwise
+        Tuple of (success, all_files) where all_files is the set of files read
     """
     log_dir.mkdir(parents=True, exist_ok=True)
     build_log = log_dir / "build.log"
@@ -214,7 +317,7 @@ def run_build(
             with open(build_log, "a", encoding="utf-8") as f:
                 f.write(f"[{_timestamp()}] ERROR: unknown tool '{tool}'\n")
             print(f"Error: unknown tool '{tool}'. Valid: {', '.join(TOOL_COMMANDS)}")
-            return False
+            return False, all_files
 
         args = _build_tool_args(tool_lower, tex_file)
         step_label = f"[{i+1}/{len(steps)}] {tool_lower}"
@@ -239,7 +342,7 @@ def run_build(
             with open(build_log, "a", encoding="utf-8") as f:
                 f.write(f"[{_timestamp()}] ERROR: '{args[0]}' not found on PATH\n\n")
             print(f"Error: '{args[0]}' not found. Is it installed?")
-            return False
+            return False, all_files
 
         output = stdout.decode("utf-8", errors="replace") if stdout else ""
         with open(build_log, "a", encoding="utf-8") as f:
@@ -281,4 +384,4 @@ def run_build(
                 f.write(f"{fp}\n")
             f.flush()
 
-    return all_success
+    return all_success, all_files

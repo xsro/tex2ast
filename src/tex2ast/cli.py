@@ -2,6 +2,7 @@
 
 import json
 import sys
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -14,7 +15,7 @@ from .ast_nodes import LatexAST, ASTNode, SourcePos, SourceRange
 from .remove_changes import process_file, show_diff
 from .dependency import collect_all_dependencies, find_unreferenced_files, format_dependencies
 from .bib_parser import extract_cited_entries, format_bib_entries, _find_bib_files
-from .build import run_build, expand_steps, TOOL_COMMANDS, STEP_ALIASES
+from .build import run_build, pack_dependency_files, extract_zip_project, expand_steps, TOOL_COMMANDS, STEP_ALIASES
 
 
 # --- AST <-> dict conversion ---
@@ -477,17 +478,23 @@ def extract_bib(input_file: str, output_file: str | None, bib_files: tuple[str])
 
 @cli.command('build')
 @click.option('--input', '-i', 'input_file',
-              type=click.Path(exists=True),
               required=True,
-              help='Input LaTeX main file')
+              help='Input .tex file or .zip archive')
+@click.option('--main', 'main_file',
+              default=None,
+              help='Main .tex file inside zip (required when --input is a .zip)')
 @click.option('--steps',
               required=True,
               help='Comma-separated build steps. Tools: xelatex, pdflatex, biber, bibtex. Aliases: pdf, xe, pdf2, xe2, pdf3, xe3, br, bt')
 @click.option('--log-dir',
               type=click.Path(),
-              default='.',
-              help='Directory for log files (default: current directory)')
-def build(input_file: str, steps: str, log_dir: str):
+              default=str(Path(tempfile.gettempdir())/"tex2ast"/"logs"),
+              help='Directory for log files (default: system temp directory)')
+@click.option('--pack',
+              type=click.Path(),
+              default=None,
+              help='Pack project dependency files into a zip archive')
+def build(input_file: str, main_file: str | None, steps: str, log_dir: str, pack: str | None):
     """Run LaTeX build tools sequentially.
 
     Compiles the LaTeX project using the specified tools in order.
@@ -500,8 +507,33 @@ def build(input_file: str, steps: str, log_dir: str):
         tex2ast build -i main.tex --steps xe,biber,xe2
 
         tex2ast build -i main.tex --steps pdf2 --log-dir ./logs
+
+        tex2ast build -i main.tex --steps xe,bt,xe2 --pack project.zip
+
+        tex2ast build -i project.zip --main main.tex --steps pdf,bibtex,pdf2
     """
+    from_zip = False
     input_path = Path(input_file).resolve()
+
+    if input_path.suffix.lower() == '.zip':
+        if not input_path.exists():
+            click.echo(f"Error: zip file not found: {input_path}", err=True)
+            sys.exit(1)
+        if not main_file:
+            click.echo("Error: --main is required when --input is a .zip file", err=True)
+            sys.exit(1)
+        try:
+            input_path = extract_zip_project(input_path, main_file)
+            from_zip = True
+            click.echo(f"Extracted to {input_path.parent}")
+        except FileNotFoundError as e:
+            click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+    else:
+        if not input_path.exists():
+            click.echo(f"Error: file not found: {input_path}", err=True)
+            sys.exit(1)
+
     log_path = Path(log_dir).resolve()
 
     step_list = [s.strip() for s in steps.split(',') if s.strip()]
@@ -523,7 +555,7 @@ def build(input_file: str, steps: str, log_dir: str):
     click.echo(f"Logs: {log_path / 'build.log'}, {log_path / 'build-io.log'}")
     click.echo()
 
-    success = run_build(input_path, step_list, log_path)
+    success, all_files = run_build(input_path, step_list, log_path)
 
     click.echo()
     if success:
@@ -531,6 +563,17 @@ def build(input_file: str, steps: str, log_dir: str):
     else:
         click.echo("Build finished with errors. Check build.log for details.")
         sys.exit(1)
+
+    # Pack dependency files (skip if input was from zip)
+    if pack and not from_zip:
+        pack_path = Path(pack).resolve()
+        count = pack_dependency_files(input_path, all_files, pack_path)
+        if count > 0:
+            click.echo(f"Packed {count} file(s) to {pack}")
+        else:
+            click.echo("No dependency files to pack.")
+    elif pack and from_zip:
+        click.echo("Skipping --pack (input is from zip archive)")
 
 
 if __name__ == '__main__':

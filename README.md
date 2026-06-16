@@ -93,7 +93,9 @@ tex2ast extract-bib -i document.tex -o cited.bib --bib refs.bib
 
 ```bash
 tex2ast build -i main.tex --steps xelatex,biber,xelatex,xelatex
-tex2ast build -i main.tex --steps xe,bt,xe2 --log-dir ./logs
+tex2ast build -i main.tex --steps xe,bt,xe2 --log-dir ./logs  # custom log directory
+tex2ast build -i main.tex --steps pdf,bibtex,pdf2 --pack project.zip  # pack deps
+tex2ast build -i project.zip --main main.tex --steps pdf,bibtex,pdf2  # build from zip
 ```
 
 Supported tools: `xelatex`, `pdflatex`, `biber`, `bibtex`
@@ -111,7 +113,10 @@ Step aliases:
 | `br` | `biber` |
 | `bt` | `bibtex` |
 
-Output:
+Zip input: use `-i project.zip --main main.tex` to extract and build from a zip archive.
+Files are extracted to a temp directory (`tex2ast/{timestamp}`). `--pack` is ignored when building from zip.
+
+Output (default in system temp directory, override with `--log-dir`):
 - `build.log` - Compilation output from each step
 - `build-io.log` - Summary of all files read during the build (absolute paths)
 
