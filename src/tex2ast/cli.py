@@ -12,10 +12,11 @@ from .lexer import LatexLexer
 from .parser import LatexParser
 from .serializer import LatexSerializer
 from .ast_nodes import LatexAST, ASTNode, SourcePos, SourceRange
-from .remove_changes import process_file, show_diff
+from .remove_changes import process_file, show_diff, expand_and_remove_changes
 from .dependency import collect_all_dependencies, find_unreferenced_files, format_dependencies
 from .bib_parser import extract_cited_entries, format_bib_entries, _find_bib_files
 from .build import run_build, pack_dependency_files, extract_zip_project, expand_steps, TOOL_COMMANDS, STEP_ALIASES
+from .expand import expand_latex
 
 
 # --- AST <-> dict conversion ---
@@ -300,47 +301,55 @@ def main():
               type=click.Path(exists=True),
               required=True,
               help='Input LaTeX file path')
-@click.option('--new', 'mode_new',
-              is_flag=True, default=True,
-              help='Generate new version (accept all changes)')
+@click.option('--output', '-o', 'output_file',
+              type=click.Path(),
+              help='Output file path (default: show diff)')
 @click.option('--old', 'mode_old',
               is_flag=True, default=False,
               help='Generate old version (reject all changes)')
-@click.option('--run', 'apply',
-              is_flag=True, default=False,
-              help='Apply changes to file(s) in place')
-def remove_changes(input_file: str, mode_new: bool, mode_old: bool, apply: bool):
+@click.option('--encoding', '-e',
+              default='utf-8',
+              help='File encoding')
+def remove_changes(input_file: str, output_file: Optional[str],
+                   mode_old: bool, encoding: str):
     """Remove changes package markup from LaTeX files.
 
     Supports \\added, \\deleted, \\replaced, \\comment, \\highlight commands.
     Recursively processes \\include and \\input files.
 
+    With -o, writes a single expanded file with changes removed.
+    Without -o, shows the diff for each file.
+
     Examples:
 
-        tex2ast remove-changes -i document.tex --new
+        tex2ast remove-changes -i document.tex                 # show diff (new version)
 
-        tex2ast remove-changes -i document.tex --old
+        tex2ast remove-changes -i document.tex --old           # show diff (old version)
 
-        tex2ast remove-changes -i document.tex --new --run
+        tex2ast remove-changes -i document.tex -o clean.tex    # write new version
+
+        tex2ast remove-changes -i document.tex --old -o clean.tex
     """
     from pathlib import Path
 
     mode = 'old' if mode_old else 'new'
     input_path = Path(input_file).resolve()
 
-    # Process file
-    results = process_file(input_path, mode, apply)
-
-    if not results:
-        click.echo("No files processed.", err=True)
-        sys.exit(1)
-
-    if apply:
-        click.echo(f"Processed {len(results)} file(s):")
-        for file_path in results:
-            click.echo(f"  - {file_path}")
+    if output_file:
+        # Expand includes and strip changes into one file
+        result = expand_and_remove_changes(input_path, mode)
+        output_path = Path(output_file)
+        output_path.write_text(result, encoding=encoding)
+        click.echo(f"Written to: {output_path}")
     else:
-        # Show diff (dry run)
+        # Show diff for each file
+        results = process_file(input_path, mode, False)
+
+        if not results:
+            click.echo("No files processed.", err=True)
+            sys.exit(1)
+
+        any_diff = False
         for file_path, processed in results.items():
             try:
                 original = Path(file_path).read_text(encoding='utf-8')
@@ -348,11 +357,15 @@ def remove_changes(input_file: str, mode_new: bool, mode_old: bool, apply: bool)
                 continue
 
             if original != processed:
+                any_diff = True
                 diff = show_diff(original, processed, file_path)
                 click.echo(diff)
                 click.echo()
 
-        click.echo(f"Would process {len(results)} file(s). Use --run to apply changes.")
+        if not any_diff:
+            click.echo("No changes found.")
+        else:
+            click.echo(f"Use -o <file> to write the result.")
 
 
 @cli.command('dependency')
@@ -474,6 +487,41 @@ def extract_bib(input_file: str, output_file: str | None, bib_files: tuple[str])
         click.echo(f"Exported {len(entries)} entry(ies) to {output_file}")
     else:
         click.echo(bib_output, nl=False)
+
+
+@cli.command('expand')
+@click.option('--input', '-i', 'input_file',
+              type=click.Path(exists=True),
+              required=True,
+              help='Input LaTeX main file')
+@click.option('--output', '-o', 'output_file',
+              type=click.Path(),
+              help='Output expanded file (default: <input>_expanded.tex)')
+@click.option('--encoding', '-e',
+              default='utf-8',
+              help='File encoding')
+def expand(input_file: str, output_file: Optional[str], encoding: str):
+    """Expand \\input and \\include into a single LaTeX file.
+
+    Recursively replaces \\input{...} and \\include{...} with the actual
+    file contents, producing a single self-contained .tex file.
+
+    Examples:
+
+        tex2ast expand -i main.tex
+
+        tex2ast expand -i main.tex -o merged.tex
+    """
+    input_path = Path(input_file).resolve()
+
+    if not output_file:
+        output_file = str(input_path.parent / (input_path.stem + '_expanded.tex'))
+
+    result = expand_latex(input_path)
+
+    output_path = Path(output_file)
+    output_path.write_text(result, encoding=encoding)
+    click.echo(f"Expanded to: {output_path}")
 
 
 @cli.command('build')

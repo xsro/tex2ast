@@ -9,6 +9,7 @@ LaTeX to AST converter with XeLaTeX support, roundtrip conversion, and utility c
 - **changes package**: Strip `\added`, `\deleted`, `\replaced` markup to generate old/new versions
 - **Dependency analysis**: Find all included/input/graphics files, clean unreferenced files
 - **BibTeX extraction**: Export cited bib entries to a new file
+- **Expand includes**: Merge `\input` and `\include` into a single self-contained .tex file
 - **Build automation**: Run xelatex/pdflatex/biber/bibtex sequentially with file tracking
 - Full XeLaTeX syntax support (CJK, math, tables, figures, etc.)
 
@@ -51,13 +52,16 @@ Supports `\added`, `\deleted`, `\replaced`, `\comment`, `\highlight` commands.
 Recursively processes `\include` and `\input` files.
 
 ```bash
-tex2ast remove-changes -i document.tex --new          # new version
-tex2ast remove-changes -i document.tex --old           # old version
-tex2ast remove-changes -i document.tex --new --run     # apply in place
+tex2ast remove-changes -i document.tex                  # show diff (new version)
+tex2ast remove-changes -i document.tex --old            # show diff (old version)
+tex2ast remove-changes -i document.tex -o clean.tex     # write new version
+tex2ast remove-changes -i document.tex --old -o clean.tex
 ```
 
-| Command | `--new` | `--old` |
-|---------|---------|---------|
+Without `-o`, shows the diff. With `-o`, writes a single expanded file with changes removed.
+
+| Command | default (new) | `--old` |
+|---------|---------------|---------|
 | `\added{text}` | keep text | remove |
 | `\deleted{text}` | remove | keep text |
 | `\replaced{new}{old}` | use new | use old |
@@ -89,12 +93,24 @@ tex2ast extract-bib -i document.tex -o cited.bib --bib refs.bib
 - Parses `\cite`, `\citep`, `\citet`, `\autocite`, `\parencite`, `\textcite`, `\nocite`, etc.
 - Recursively processes `\include`/`\input` for citations
 
+### `tex2ast expand` - Merge includes into a single file
+
+```bash
+tex2ast expand -i main.tex                    # output: mainexpanded.tex
+tex2ast expand -i main.tex -o merged.tex      # custom output path
+```
+
+- Recursively replaces `\input{...}` with the file contents
+- `\include{...}` is replaced with the file contents wrapped in `\clearpage`
+- Relative paths are resolved from the main file's directory
+- Circular includes are detected and skipped
+
 ### `tex2ast build` - Run LaTeX build tools
 
 ```bash
 tex2ast build -i main.tex --steps xelatex,biber,xelatex,xelatex
 tex2ast build -i main.tex --steps xe,bt,xe2 --log-dir ./logs  # custom log directory
-tex2ast build -i main.tex --steps pdf,bibtex,pdf2 --pack project.zip  # pack deps
+tex2ast build -i main.tex --steps pdf,bibtex,pdf2 --pack project.zip  # pack deps (includes main .tex)
 tex2ast build -i project.zip --main main.tex --steps pdf,bibtex,pdf2  # build from zip
 ```
 
@@ -173,6 +189,7 @@ tex2ast/
 │   ├── remove_changes.py # changes package remover
 │   ├── dependency.py     # Dependency analyzer
 │   ├── bib_parser.py     # BibTeX parser
+│   ├── expand.py         # LaTeX include expander
 │   ├── build.py          # LaTeX build automation
 │   └── cli.py            # Command-line interface
 ├── pyproject.toml

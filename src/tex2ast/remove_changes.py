@@ -257,6 +257,58 @@ def process_file(file_path: Path, mode: str, apply: bool,
     return results
 
 
+def expand_and_remove_changes(
+    main_file: Path,
+    mode: str,
+    visited: set[Path] | None = None,
+    root_dir: Path | None = None,
+) -> str:
+    """Recursively expand \\input/\\include and strip changes markup.
+
+    Args:
+        main_file: Path to the main .tex file.
+        mode: 'new' or 'old'
+        visited: Set of already-visited files (cycle detection).
+        root_dir: Root directory for resolving relative paths.
+
+    Returns:
+        The expanded LaTeX source with changes markup removed.
+    """
+    main_file = main_file.resolve()
+    if visited is None:
+        visited = set()
+    if root_dir is None:
+        root_dir = main_file.parent
+
+    if main_file in visited:
+        return "% [circular include skipped]\n"
+    visited.add(main_file)
+
+    try:
+        content = main_file.read_text(encoding='utf-8')
+    except FileNotFoundError:
+        return f"% [file not found: {main_file}]\n"
+
+    # First expand includes, then strip changes
+    pattern = re.compile(r'(\\(?:include|input))\s*\{([^}]+)\}')
+
+    def _replace(match: re.Match) -> str:
+        cmd = match.group(1)
+        file_ref = match.group(2).strip()
+        if not file_ref.endswith('.tex'):
+            file_ref += '.tex'
+        ref_path = (root_dir / file_ref).resolve()
+        expanded = expand_and_remove_changes(ref_path, mode, visited, root_dir)
+        if cmd == '\\include':
+            return f"\\clearpage\n{expanded}\\clearpage\n"
+        return expanded
+
+    expanded = pattern.sub(_replace, content)
+    processed = process_changes(expanded, mode)
+    processed = _remove_usepackage_changes(processed)
+    return processed
+
+
 def show_diff(original: str, processed: str, file_path: str) -> str:
     """Show a simple diff between original and processed content."""
     orig_lines = original.splitlines(keepends=True)
