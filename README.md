@@ -49,16 +49,15 @@ diff document.tex document.tex  # identical!
 ### `tex2ast remove-changes` - Strip changes package markup
 
 Supports `\added`, `\deleted`, `\replaced`, `\comment`, `\highlight` commands.
-Recursively processes `\include` and `\input` files.
+Recursively expands `\include` and `\input` into a single output file.
 
 ```bash
-tex2ast remove-changes -i document.tex                  # show diff (new version)
-tex2ast remove-changes -i document.tex --old            # show diff (old version)
-tex2ast remove-changes -i document.tex -o clean.tex     # write new version
-tex2ast remove-changes -i document.tex --old -o clean.tex
+tex2ast remove-changes -i document.tex                  # → document_new.tex
+tex2ast remove-changes -i document.tex --old            # → document_old.tex
+tex2ast remove-changes -i document.tex -o clean.tex     # custom output
+tex2ast remove-changes -i document.tex --print_change new   # also print to stdout
+tex2ast remove-changes -i document.tex --print_change no    # silent
 ```
-
-Without `-o`, shows the diff. With `-o`, writes a single expanded file with changes removed.
 
 | Command | default (new) | `--old` |
 |---------|---------------|---------|

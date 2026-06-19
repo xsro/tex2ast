@@ -12,7 +12,7 @@ from .lexer import LatexLexer
 from .parser import LatexParser
 from .serializer import LatexSerializer
 from .ast_nodes import LatexAST, ASTNode, SourcePos, SourceRange
-from .remove_changes import process_file, show_diff, expand_and_remove_changes
+from .remove_changes import expand_and_remove_changes
 from .dependency import collect_all_dependencies, find_unreferenced_files, format_dependencies
 from .bib_parser import extract_cited_entries, format_bib_entries, _find_bib_files
 from .build import run_build, pack_dependency_files, extract_zip_project, expand_steps, TOOL_COMMANDS, STEP_ALIASES
@@ -303,69 +303,63 @@ def main():
               help='Input LaTeX file path')
 @click.option('--output', '-o', 'output_file',
               type=click.Path(),
-              help='Output file path (default: show diff)')
+              help='Output file path (default: <input>_new.tex or <input>_old.tex)')
 @click.option('--old', 'mode_old',
               is_flag=True, default=False,
               help='Generate old version (reject all changes)')
+@click.option('--print_change',
+              type=click.Choice(['new', 'old', 'no']),
+              default=None,
+              help='Print result to stdout: new, old, or no')
 @click.option('--encoding', '-e',
               default='utf-8',
               help='File encoding')
 def remove_changes(input_file: str, output_file: Optional[str],
-                   mode_old: bool, encoding: str):
+                   mode_old: bool, print_change: Optional[str], encoding: str):
     """Remove changes package markup from LaTeX files.
 
     Supports \\added, \\deleted, \\replaced, \\comment, \\highlight commands.
-    Recursively processes \\include and \\input files.
+    Recursively expands \\include and \\input files into a single output.
 
-    With -o, writes a single expanded file with changes removed.
-    Without -o, shows the diff for each file.
+    Without -o, defaults to <input>_new.tex or <input>_old.tex.
 
     Examples:
 
-        tex2ast remove-changes -i document.tex                 # show diff (new version)
+        tex2ast remove-changes -i document.tex
 
-        tex2ast remove-changes -i document.tex --old           # show diff (old version)
+        tex2ast remove-changes -i document.tex --old
 
-        tex2ast remove-changes -i document.tex -o clean.tex    # write new version
+        tex2ast remove-changes -i document.tex -o clean.tex
 
-        tex2ast remove-changes -i document.tex --old -o clean.tex
+        tex2ast remove-changes -i document.tex --print_change new
     """
     from pathlib import Path
 
     mode = 'old' if mode_old else 'new'
     input_path = Path(input_file).resolve()
 
-    if output_file:
-        # Expand includes and strip changes into one file
-        result = expand_and_remove_changes(input_path, mode)
-        output_path = Path(output_file)
-        output_path.write_text(result, encoding=encoding)
-        click.echo(f"Written to: {output_path}")
-    else:
-        # Show diff for each file
-        results = process_file(input_path, mode, False)
+    # Default output: <stem>_new.tex or <stem>_old.tex
+    if not output_file:
+        suffix = '_old' if mode_old else '_new'
+        output_file = str(input_path.parent / (input_path.stem + suffix + '.tex'))
 
-        if not results:
-            click.echo("No files processed.", err=True)
-            sys.exit(1)
+    # Expand includes and strip changes
+    result = expand_and_remove_changes(input_path, mode)
+    output_path = Path(output_file)
+    output_path.write_text(result, encoding=encoding)
 
-        any_diff = False
-        for file_path, processed in results.items():
-            try:
-                original = Path(file_path).read_text(encoding='utf-8')
-            except Exception:
-                continue
-
-            if original != processed:
-                any_diff = True
-                diff = show_diff(original, processed, file_path)
-                click.echo(diff)
-                click.echo()
-
-        if not any_diff:
-            click.echo("No changes found.")
+    # Print result if requested
+    if print_change == 'no':
+        pass  # silent
+    elif print_change is not None:
+        # Print the requested version (reuse result if same mode)
+        print_mode = print_change
+        if print_mode == mode:
+            click.echo(result, nl=False)
         else:
-            click.echo(f"Use -o <file> to write the result.")
+            click.echo(expand_and_remove_changes(input_path, print_mode), nl=False)
+    else:
+        click.echo(f"Written to: {output_path}")
 
 
 @cli.command('dependency')
