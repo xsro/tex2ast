@@ -317,9 +317,12 @@ def main():
 @click.option('--changes-list',
               default=None,
               help='Path to changes config file, or "none" to disable custom commands')
+@click.option('--remove-empty',
+              is_flag=True, default=False,
+              help='Remove empty \\[...\\] and equation environments')
 def remove_changes(input_file: str, output_file: Optional[str],
                    mode_old: bool, print_change: Optional[str], encoding: str,
-                   changes_list: Optional[str]):
+                   changes_list: Optional[str], remove_empty: bool):
     """Remove changes package markup from LaTeX files.
 
     Supports \\added, \\deleted, \\replaced, \\comment, \\highlight commands.
@@ -343,6 +346,8 @@ def remove_changes(input_file: str, output_file: Optional[str],
         tex2ast remove-changes -i document.tex --changes-list=none
 
         tex2ast remove-changes -i document.tex --changes-list=myconfig.txt
+
+        tex2ast remove-changes -i document.tex --remove-empty
     """
     from pathlib import Path
     from .remove_changes import get_changes_commands
@@ -359,7 +364,7 @@ def remove_changes(input_file: str, output_file: Optional[str],
         output_file = str(input_path.parent / (input_path.stem + suffix + '.tex'))
 
     # Expand includes and strip changes
-    result = expand_and_remove_changes(input_path, mode, custom_commands=custom_commands)
+    result = expand_and_remove_changes(input_path, mode, custom_commands=custom_commands, remove_empty=remove_empty)
     output_path = Path(output_file)
     output_path.write_text(result, encoding=encoding)
 
@@ -374,7 +379,8 @@ def remove_changes(input_file: str, output_file: Optional[str],
         else:
             click.echo(
                 expand_and_remove_changes(
-                    input_path, print_mode, custom_commands=custom_commands
+                    input_path, print_mode, custom_commands=custom_commands,
+                    remove_empty=remove_empty
                 ),
                 nl=False
             )

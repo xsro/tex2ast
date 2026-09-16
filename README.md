@@ -62,6 +62,7 @@ tex2ast remove-changes -i document.tex --print_change new   # also print to stdo
 tex2ast remove-changes -i document.tex --print_change no    # silent
 tex2ast remove-changes -i document.tex --changes-list=none         # disable custom commands
 tex2ast remove-changes -i document.tex --changes-list=myconfig.txt # use custom config
+tex2ast remove-changes -i document.tex --remove-empty           # remove empty math environments
 ```
 
 | Command | default (new) | `--old` |

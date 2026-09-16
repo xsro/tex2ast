@@ -195,13 +195,15 @@ def _extract_brace_content(text: str, pos: int) -> tuple[str, int]:
     return text[pos + 1:end], end + 1
 
 
-def process_changes(text: str, mode: str, custom_commands: list[dict] | None = None) -> str:
+def process_changes(text: str, mode: str, custom_commands: list[dict] | None = None,
+                   remove_empty: bool = False) -> str:
     """Process changes package commands in text.
 
     Args:
         text: LaTeX source text
         mode: 'new' for new version, 'old' for old version
         custom_commands: List of custom command specs from config
+        remove_empty: If True, remove empty \\[...\\] and equation environments
 
     Returns:
         Processed text
@@ -322,7 +324,13 @@ def process_changes(text: str, mode: str, custom_commands: list[dict] | None = N
             result.append(text[i])
             i += 1
 
-    return ''.join(result)
+    processed = ''.join(result)
+
+    # Remove empty math environments if requested
+    if remove_empty:
+        processed = _remove_empty_math(processed)
+
+    return processed
 
 
 def _find_included_files(text: str, base_dir: Path) -> list[Path]:
@@ -356,10 +364,59 @@ def _remove_usepackage_changes(text: str) -> str:
     return text
 
 
+def _remove_empty_math_simple(text: str) -> str:
+    """Remove empty \\[...\\] and equation environments (unconditional)."""
+    # Remove empty \[...\]
+    text = re.sub(r'\\\[\s*\\\]', '', text)
+    # Remove empty \begin{equation}...\end{equation}
+    text = re.sub(r'\\begin\{equation\}\s*\\end\{equation\}', '', text)
+    # Remove empty \begin{equation*}...\end{equation*}
+    text = re.sub(r'\\begin\{equation\*\}\s*\\end\{equation\*\}', '', text)
+    return text
+
+
+def _remove_empty_math(text: str) -> str:
+    """Remove empty \\[...\\] and equation environments.
+
+    Only processes content inside \\begin{document}...\\end{document}
+    and empty \\title{} commands in the preamble.
+    """
+    # Find document environment boundaries
+    doc_match = re.search(r'\\begin\{document\}', text)
+    if not doc_match:
+        # No document environment, don't process math environments
+        # But still handle empty \title{}
+        text = re.sub(r'\\title\{(\s*)\}', '', text)
+        return text
+
+    doc_start = doc_match.end()
+    doc_end_match = re.search(r'\\end\{document\}', text[doc_start:])
+    if not doc_end_match:
+        # No \end{document} found, don't process
+        text = re.sub(r'\\title\{(\s*)\}', '', text)
+        return text
+
+    doc_end = doc_start + doc_end_match.start()
+
+    # Split into preamble, document body, and post-document
+    preamble = text[:doc_start]
+    doc_body = text[doc_start:doc_end]
+    post_doc = text[doc_end:]
+
+    # Process empty math only in document body
+    doc_body = _remove_empty_math_simple(doc_body)
+
+    # Remove empty \title{} in preamble
+    preamble = re.sub(r'\\title\{(\s*)\}', '', preamble)
+
+    return preamble + doc_body + post_doc
+
+
 def process_file(file_path: Path, mode: str, apply: bool,
                  visited: set[Path] | None = None,
                  base_dir: Path | None = None,
-                 custom_commands: list[dict] | None = None) -> dict[str, str]:
+                 custom_commands: list[dict] | None = None,
+                 remove_empty: bool = False) -> dict[str, str]:
     """Process a single LaTeX file.
 
     Args:
@@ -369,6 +426,7 @@ def process_file(file_path: Path, mode: str, apply: bool,
         visited: Set of already processed files (for cycle detection)
         base_dir: Base directory for resolving includes
         custom_commands: List of custom command specs from config
+        remove_empty: If True, remove empty \\[...\\] and equation environments
 
     Returns:
         Dict mapping file paths to their processed content
@@ -399,11 +457,11 @@ def process_file(file_path: Path, mode: str, apply: bool,
     # Process included files recursively
     results = {}
     for inc_file in included_files:
-        inc_results = process_file(inc_file, mode, apply, visited, base_dir, custom_commands)
+        inc_results = process_file(inc_file, mode, apply, visited, base_dir, custom_commands, remove_empty)
         results.update(inc_results)
 
     # Process current file
-    processed = process_changes(content, mode, custom_commands)
+    processed = process_changes(content, mode, custom_commands, remove_empty)
     processed = _remove_usepackage_changes(processed)
 
     results[str(file_path)] = processed
@@ -421,6 +479,7 @@ def expand_and_remove_changes(
     visited: set[Path] | None = None,
     root_dir: Path | None = None,
     custom_commands: list[dict] | None = None,
+    remove_empty: bool = False,
 ) -> str:
     """Recursively expand \\input/\\include and strip changes markup.
 
@@ -430,6 +489,7 @@ def expand_and_remove_changes(
         visited: Set of already-visited files (cycle detection).
         root_dir: Root directory for resolving relative paths.
         custom_commands: List of custom command specs from config.
+        remove_empty: If True, remove empty \\[...\\] and equation environments.
 
     Returns:
         The expanded LaTeX source with changes markup removed.
@@ -458,13 +518,13 @@ def expand_and_remove_changes(
         if not file_ref.endswith('.tex'):
             file_ref += '.tex'
         ref_path = (root_dir / file_ref).resolve()
-        expanded = expand_and_remove_changes(ref_path, mode, visited, root_dir, custom_commands)
+        expanded = expand_and_remove_changes(ref_path, mode, visited, root_dir, custom_commands, remove_empty)
         if cmd == '\\include':
             return f"\\clearpage\n{expanded}\\clearpage\n"
         return expanded
 
     expanded = pattern.sub(_replace, content)
-    processed = process_changes(expanded, mode, custom_commands)
+    processed = process_changes(expanded, mode, custom_commands, remove_empty)
     processed = _remove_usepackage_changes(processed)
     return processed
 
