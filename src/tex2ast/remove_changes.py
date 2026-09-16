@@ -12,6 +12,126 @@ from typing import Optional
 # \comment[options]{text} - comment
 # \highlight[options]{text} - highlight
 
+
+# Built-in default commands (used if config file not found)
+BUILTIN_DEFAULT_COMMANDS = [
+    {'name': '\\cancel', 'has_new': False, 'has_old': True},
+    {'name': '\\xcancel', 'has_new': False, 'has_old': True},
+    {'name': '\\sG', 'has_new': False, 'has_old': True},
+    {'name': '\\tG', 'has_new': True, 'has_old': False},
+    {'name': '\\replaceG', 'has_new': True, 'has_old': True},
+]
+
+
+def get_default_config_path() -> Optional[Path]:
+    """Get the path to the default config file.
+
+    Looks for .config/remove-changes.txt in:
+    1. Current working directory
+    2. Project root (where pyproject.toml is)
+
+    Returns:
+        Path to config file, or None if not found
+    """
+    # Check current working directory
+    cwd_config = Path('.config/remove-changes.txt').resolve()
+    if cwd_config.exists():
+        return cwd_config
+
+    # Check project root (two levels up from this file)
+    # src/tex2ast/remove_changes.py -> project root
+    project_root = Path(__file__).resolve().parent.parent.parent
+    project_config = project_root / '.config/remove-changes.txt'
+    if project_config.exists():
+        return project_config
+
+    return None
+
+
+def parse_changes_config(config_path: Path) -> list[dict]:
+    """Parse a remove-changes config file.
+
+    Format:
+    # Comments start with #
+    \\command{old}     - delete content
+    \\command{new}     - keep content
+    \\command{new}{old} - replace (keep new, delete old)
+
+    Returns:
+        List of command specs with 'name', 'has_new', 'has_old'
+    """
+    commands = []
+
+    if config_path is None or not config_path.exists():
+        return commands
+
+    content = config_path.read_text(encoding='utf-8')
+
+    for line in content.splitlines():
+        # Strip inline comments
+        line = line.split('#')[0].strip()
+        if not line:
+            continue
+
+        # Must start with backslash
+        if not line.startswith('\\'):
+            continue
+
+        # Determine behavior based on placeholders
+        has_new = '{new}' in line
+        has_old = '{old}' in line
+
+        if not has_new and not has_old:
+            continue
+
+        # Extract command name (everything before first {, [, or whitespace)
+        cmd_end = len(line)
+        for i, ch in enumerate(line):
+            if ch in '{[' or ch.isspace():
+                cmd_end = i
+                break
+
+        cmd_name = line[:cmd_end]
+        if not cmd_name.startswith('\\'):
+            continue
+
+        commands.append({
+            'name': cmd_name,
+            'has_new': has_new,
+            'has_old': has_old,
+        })
+
+    return commands
+
+
+def get_changes_commands(config_path: str | None = None) -> list[dict]:
+    """Get the list of custom change commands.
+
+    Args:
+        config_path: Path to config file, or None for default, or 'none' for no config
+
+    Returns:
+        List of command specs
+
+    Raises:
+        FileNotFoundError: if config_path is specified but file doesn't exist
+    """
+    if config_path is None:
+        # Use default config
+        default_path = get_default_config_path()
+        if default_path:
+            return parse_changes_config(default_path)
+        else:
+            # Fall back to built-in defaults
+            return list(BUILTIN_DEFAULT_COMMANDS)
+    elif config_path == 'none':
+        return []
+    else:
+        path = Path(config_path)
+        if not path.exists():
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+        return parse_changes_config(path)
+
 def _find_matching_brace(text: str, start: int) -> int:
     """Find the position of the matching closing brace.
 
@@ -75,12 +195,13 @@ def _extract_brace_content(text: str, pos: int) -> tuple[str, int]:
     return text[pos + 1:end], end + 1
 
 
-def process_changes(text: str, mode: str) -> str:
+def process_changes(text: str, mode: str, custom_commands: list[dict] | None = None) -> str:
     """Process changes package commands in text.
 
     Args:
         text: LaTeX source text
         mode: 'new' for new version, 'old' for old version
+        custom_commands: List of custom command specs from config
 
     Returns:
         Processed text
@@ -88,10 +209,16 @@ def process_changes(text: str, mode: str) -> str:
     result = []
     i = 0
 
+    # Standard changes commands
+    standard_commands = ['\\added', '\\deleted', '\\replaced', '\\comment', '\\highlight']
+
+    # Build list of all commands to check
+    custom_names = [cmd['name'] for cmd in (custom_commands or [])]
+
     while i < len(text):
-        # Check for changes commands
+        # Check for any command
         cmd_match = None
-        for cmd in ['\\added', '\\deleted', '\\replaced', '\\comment', '\\highlight']:
+        for cmd in standard_commands + custom_names:
             if text[i:i + len(cmd)] == cmd:
                 # Make sure it's a complete command (next char is not alpha)
                 next_pos = i + len(cmd)
@@ -160,8 +287,37 @@ def process_changes(text: str, mode: str) -> str:
                 i = end_pos
 
             else:
-                result.append(text[i])
-                i += 1
+                # Custom command
+                cmd_spec = next(c for c in custom_commands if c['name'] == cmd_match)
+
+                if cmd_spec['has_new'] and cmd_spec['has_old']:
+                    # Replace: {new}{old}
+                    new_content, end_pos = _extract_brace_content(text, pos)
+                    temp_pos = end_pos
+                    while temp_pos < len(text) and text[temp_pos] in ' \t\n':
+                        temp_pos += 1
+                    if temp_pos < len(text) and text[temp_pos] == '{':
+                        old_content, end_pos = _extract_brace_content(text, temp_pos)
+                        if mode == 'new':
+                            result.append(new_content)
+                        else:
+                            result.append(old_content)
+                        i = end_pos
+                    else:
+                        result.append(text[i])
+                        i += 1
+                elif cmd_spec['has_new']:
+                    # Keep: {new}
+                    content, end_pos = _extract_brace_content(text, pos)
+                    result.append(content)
+                    i = end_pos
+                elif cmd_spec['has_old']:
+                    # Delete: {old}
+                    _, end_pos = _extract_brace_content(text, pos)
+                    i = end_pos
+                else:
+                    result.append(text[i])
+                    i += 1
         else:
             result.append(text[i])
             i += 1
@@ -202,7 +358,8 @@ def _remove_usepackage_changes(text: str) -> str:
 
 def process_file(file_path: Path, mode: str, apply: bool,
                  visited: set[Path] | None = None,
-                 base_dir: Path | None = None) -> dict[str, str]:
+                 base_dir: Path | None = None,
+                 custom_commands: list[dict] | None = None) -> dict[str, str]:
     """Process a single LaTeX file.
 
     Args:
@@ -211,6 +368,7 @@ def process_file(file_path: Path, mode: str, apply: bool,
         apply: If True, modify files in place
         visited: Set of already processed files (for cycle detection)
         base_dir: Base directory for resolving includes
+        custom_commands: List of custom command specs from config
 
     Returns:
         Dict mapping file paths to their processed content
@@ -241,11 +399,11 @@ def process_file(file_path: Path, mode: str, apply: bool,
     # Process included files recursively
     results = {}
     for inc_file in included_files:
-        inc_results = process_file(inc_file, mode, apply, visited, base_dir)
+        inc_results = process_file(inc_file, mode, apply, visited, base_dir, custom_commands)
         results.update(inc_results)
 
     # Process current file
-    processed = process_changes(content, mode)
+    processed = process_changes(content, mode, custom_commands)
     processed = _remove_usepackage_changes(processed)
 
     results[str(file_path)] = processed
@@ -262,6 +420,7 @@ def expand_and_remove_changes(
     mode: str,
     visited: set[Path] | None = None,
     root_dir: Path | None = None,
+    custom_commands: list[dict] | None = None,
 ) -> str:
     """Recursively expand \\input/\\include and strip changes markup.
 
@@ -270,6 +429,7 @@ def expand_and_remove_changes(
         mode: 'new' or 'old'
         visited: Set of already-visited files (cycle detection).
         root_dir: Root directory for resolving relative paths.
+        custom_commands: List of custom command specs from config.
 
     Returns:
         The expanded LaTeX source with changes markup removed.
@@ -298,13 +458,13 @@ def expand_and_remove_changes(
         if not file_ref.endswith('.tex'):
             file_ref += '.tex'
         ref_path = (root_dir / file_ref).resolve()
-        expanded = expand_and_remove_changes(ref_path, mode, visited, root_dir)
+        expanded = expand_and_remove_changes(ref_path, mode, visited, root_dir, custom_commands)
         if cmd == '\\include':
             return f"\\clearpage\n{expanded}\\clearpage\n"
         return expanded
 
     expanded = pattern.sub(_replace, content)
-    processed = process_changes(expanded, mode)
+    processed = process_changes(expanded, mode, custom_commands)
     processed = _remove_usepackage_changes(processed)
     return processed
 

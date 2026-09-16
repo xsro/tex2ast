@@ -51,12 +51,17 @@ diff document.tex document.tex  # identical!
 Supports `\added`, `\deleted`, `\replaced`, `\comment`, `\highlight` commands.
 Recursively expands `\include` and `\input` into a single output file.
 
+Custom revision commands can be configured via `.config/remove-changes.txt`.
+Use `--changes-list=none` to disable, or `--changes-list=<path>` for custom config.
+
 ```bash
 tex2ast remove-changes -i document.tex                  # → document_new.tex
 tex2ast remove-changes -i document.tex --old            # → document_old.tex
 tex2ast remove-changes -i document.tex -o clean.tex     # custom output
 tex2ast remove-changes -i document.tex --print_change new   # also print to stdout
 tex2ast remove-changes -i document.tex --print_change no    # silent
+tex2ast remove-changes -i document.tex --changes-list=none         # disable custom commands
+tex2ast remove-changes -i document.tex --changes-list=myconfig.txt # use custom config
 ```
 
 | Command | default (new) | `--old` |
@@ -66,6 +71,24 @@ tex2ast remove-changes -i document.tex --print_change no    # silent
 | `\replaced{new}{old}` | use new | use old |
 | `\comment{text}` | remove | remove |
 | `\highlight{text}` | keep text | keep text |
+
+#### Custom revision commands
+
+The `.config/remove-changes.txt` file defines additional revision commands:
+
+- Lines with `{old}` → content is removed
+- Lines with `{new}` → content is kept
+- Lines with both `{new}{old}` → replacement (keep new, remove old)
+
+Default commands:
+
+```text
+\cancel{old}
+\xcancel{old}
+\sG{old}
+\tG{new}
+\replaceG{new}{old}
+```
 
 ### `tex2ast dependency` - Analyze file dependencies
 

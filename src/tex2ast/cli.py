@@ -314,12 +314,19 @@ def main():
 @click.option('--encoding', '-e',
               default='utf-8',
               help='File encoding')
+@click.option('--changes-list',
+              default=None,
+              help='Path to changes config file, or "none" to disable custom commands')
 def remove_changes(input_file: str, output_file: Optional[str],
-                   mode_old: bool, print_change: Optional[str], encoding: str):
+                   mode_old: bool, print_change: Optional[str], encoding: str,
+                   changes_list: Optional[str]):
     """Remove changes package markup from LaTeX files.
 
     Supports \\added, \\deleted, \\replaced, \\comment, \\highlight commands.
     Recursively expands \\include and \\input files into a single output.
+
+    Custom revision commands can be configured via .config/remove-changes.txt.
+    Use --changes-list=none to disable, or --changes-list=<path> for custom config.
 
     Without -o, defaults to <input>_new.tex or <input>_old.tex.
 
@@ -332,11 +339,19 @@ def remove_changes(input_file: str, output_file: Optional[str],
         tex2ast remove-changes -i document.tex -o clean.tex
 
         tex2ast remove-changes -i document.tex --print_change new
+
+        tex2ast remove-changes -i document.tex --changes-list=none
+
+        tex2ast remove-changes -i document.tex --changes-list=myconfig.txt
     """
     from pathlib import Path
+    from .remove_changes import get_changes_commands
 
     mode = 'old' if mode_old else 'new'
     input_path = Path(input_file).resolve()
+
+    # Get custom commands from config
+    custom_commands = get_changes_commands(changes_list)
 
     # Default output: <stem>_new.tex or <stem>_old.tex
     if not output_file:
@@ -344,7 +359,7 @@ def remove_changes(input_file: str, output_file: Optional[str],
         output_file = str(input_path.parent / (input_path.stem + suffix + '.tex'))
 
     # Expand includes and strip changes
-    result = expand_and_remove_changes(input_path, mode)
+    result = expand_and_remove_changes(input_path, mode, custom_commands=custom_commands)
     output_path = Path(output_file)
     output_path.write_text(result, encoding=encoding)
 
@@ -357,7 +372,12 @@ def remove_changes(input_file: str, output_file: Optional[str],
         if print_mode == mode:
             click.echo(result, nl=False)
         else:
-            click.echo(expand_and_remove_changes(input_path, print_mode), nl=False)
+            click.echo(
+                expand_and_remove_changes(
+                    input_path, print_mode, custom_commands=custom_commands
+                ),
+                nl=False
+            )
     else:
         click.echo(f"Written to: {output_path}")
 
