@@ -66,6 +66,9 @@ tex2ast remove-changes -i document.tex --remove-empty-math           # remove em
 tex2ast remove-changes --project tex2ast.config.py     # use project config file
 ```
 
+> **Note:** When a line is completely deleted (e.g., `\deleted{...}` occupies an entire line),
+> a `%` comment is left in its place to prevent LaTeX from merging paragraphs.
+
 | Command | default (new) | `--old` |
 |---------|---------------|---------|
 | `\added{text}` | keep text | remove |

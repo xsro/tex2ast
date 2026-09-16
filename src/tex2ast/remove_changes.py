@@ -463,6 +463,8 @@ def process_file(file_path: Path, mode: str, apply: bool,
     # Process current file
     processed = process_changes(content, mode, custom_commands, remove_empty)
     processed = _remove_usepackage_changes(processed)
+    # Preserve line structure: replace lines that became empty with % comments
+    processed = _preserve_deleted_lines(content, processed)
 
     results[str(file_path)] = processed
 
@@ -471,6 +473,35 @@ def process_file(file_path: Path, mode: str, apply: bool,
         file_path.write_text(processed, encoding='utf-8')
 
     return results
+
+
+def _preserve_deleted_lines(original: str, processed: str) -> str:
+    """Replace lines that became empty after changes removal with % comments.
+
+    This prevents LaTeX from merging paragraphs when an entire line
+    is deleted by \\deleted{} or custom delete commands.
+
+    Args:
+        original: Original text before changes processing
+        processed: Text after changes processing
+
+    Returns:
+        Processed text with empty lines replaced by % where appropriate
+    """
+    orig_lines = original.splitlines(keepends=True)
+    proc_lines = processed.splitlines(keepends=True)
+
+    result = []
+    for i, proc_line in enumerate(proc_lines):
+        # If processed line is empty/whitespace-only and original had content
+        if not proc_line.strip() and i < len(orig_lines) and orig_lines[i].strip():
+            # Preserve original line ending
+            ending = '\n' if proc_line.endswith('\n') else ''
+            result.append('%' + ending)
+        else:
+            result.append(proc_line)
+
+    return ''.join(result)
 
 
 def expand_and_remove_changes(
@@ -526,6 +557,8 @@ def expand_and_remove_changes(
     expanded = pattern.sub(_replace, content)
     processed = process_changes(expanded, mode, custom_commands, remove_empty)
     processed = _remove_usepackage_changes(processed)
+    # Preserve line structure: replace lines that became empty with % comments
+    processed = _preserve_deleted_lines(expanded, processed)
     return processed
 
 
