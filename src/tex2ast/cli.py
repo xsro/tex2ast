@@ -299,6 +299,9 @@ def main():
 def _load_project_config(config_path: str) -> dict:
     """Load tex2ast.config.py file and return the tex2ast_config dict.
 
+    Uses exec() with sys.dont_write_bytecode to avoid creating
+    __pycache__ in the project directory.
+
     Args:
         config_path: Path to the config .py file
 
@@ -309,24 +312,27 @@ def _load_project_config(config_path: str) -> dict:
         FileNotFoundError: if config file doesn't exist
         ValueError: if config file doesn't define tex2ast_config
     """
-    import importlib.util
+    import sys
 
     config_path = Path(config_path).resolve()
     if not config_path.exists():
         raise FileNotFoundError(f"Config file not found: {config_path}")
 
-    # Load the config as a Python module
-    spec = importlib.util.spec_from_file_location("tex2ast_project_config", config_path)
-    if spec is None or spec.loader is None:
-        raise ValueError(f"Cannot load config file: {config_path}")
+    # Read and exec the config file content directly
+    # Use sys.dont_write_bytecode to prevent .pyc generation in target directory
+    source = config_path.read_text(encoding='utf-8')
+    namespace = {}
+    old_dont_write = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        exec(source, namespace)
+    finally:
+        sys.dont_write_bytecode = old_dont_write
 
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    if not hasattr(module, 'tex2ast_config'):
+    if 'tex2ast_config' not in namespace:
         raise ValueError(f"Config file {config_path} does not define 'tex2ast_config'")
 
-    return module.tex2ast_config
+    return namespace['tex2ast_config']
 
 
 @cli.command('remove-changes')
