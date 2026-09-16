@@ -270,6 +270,29 @@ def _process_title_only(text: str, mode: str, custom_commands: list[dict] | None
     return re.sub(r'\\title\{([^}]*)\}', _replace_title, text)
 
 
+def _is_full_line_delete(text: str, start: int, end: int) -> bool:
+    """Check if the range [start, end) spans an entire line.
+
+    Returns True if there's only whitespace before 'start' on its line
+    and only whitespace after 'end' until the next newline.
+    """
+    # Check if there's only whitespace before start on the same line
+    line_start = start
+    while line_start > 0 and text[line_start - 1] != '\n':
+        line_start -= 1
+    if text[line_start:start].strip():
+        return False
+
+    # Check if there's only whitespace after end until next newline
+    line_end = end
+    while line_end < len(text) and text[line_end] != '\n':
+        line_end += 1
+    if text[end:line_end].strip():
+        return False
+
+    return True
+
+
 def _process_changes_unconditional(text: str, mode: str, custom_commands: list[dict] | None = None) -> str:
     """Process changes commands in text without scope restrictions."""
     result = []
@@ -315,6 +338,9 @@ def _process_changes_unconditional(text: str, mode: str, custom_commands: list[d
                     # Recursively process inner commands
                     result.append(_process_changes_unconditional(content, mode, custom_commands))
                 # For 'old' mode, skip entirely (don't append anything)
+                # If this is a full-line delete in 'old' mode, leave % to preserve paragraph breaks
+                if mode == 'old' and _is_full_line_delete(text, i, end_pos):
+                    result.append('%')
                 i = end_pos
 
             elif cmd_match == '\\deleted':
@@ -323,6 +349,9 @@ def _process_changes_unconditional(text: str, mode: str, custom_commands: list[d
                     # Recursively process inner commands
                     result.append(_process_changes_unconditional(content, mode, custom_commands))
                 # For 'new' mode, skip entirely (don't append anything)
+                # If this is a full-line delete in 'new' mode, leave % to preserve paragraph breaks
+                if mode == 'new' and _is_full_line_delete(text, i, end_pos):
+                    result.append('%')
                 i = end_pos
 
             elif cmd_match == '\\replaced':
@@ -386,6 +415,9 @@ def _process_changes_unconditional(text: str, mode: str, custom_commands: list[d
                 elif cmd_spec['has_old']:
                     # Delete: {old}
                     _, end_pos = _extract_brace_content(text, pos)
+                    # If this is a full-line delete, leave % to preserve paragraph breaks
+                    if _is_full_line_delete(text, i, end_pos):
+                        result.append('%')
                     i = end_pos
                 else:
                     result.append(text[i])
@@ -527,8 +559,6 @@ def process_file(file_path: Path, mode: str, apply: bool,
     # Process current file
     processed = process_changes(content, mode, custom_commands, remove_empty)
     processed = _remove_usepackage_changes(processed)
-    # Preserve line structure: replace lines that became empty with % comments
-    processed = _preserve_deleted_lines(content, processed)
 
     results[str(file_path)] = processed
 
@@ -622,8 +652,6 @@ def expand_and_remove_changes(
     # Now process changes on the fully expanded text
     processed = process_changes(expanded, mode, custom_commands, remove_empty)
     processed = _remove_usepackage_changes(processed)
-    # Preserve line structure: replace lines that became empty with % comments
-    processed = _preserve_deleted_lines(expanded, processed)
     return processed
 
 
