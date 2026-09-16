@@ -199,6 +199,9 @@ def process_changes(text: str, mode: str, custom_commands: list[dict] | None = N
                    remove_empty: bool = False) -> str:
     """Process changes package commands in text.
 
+    Only processes commands within \\begin{document}...\\end{document}
+    and \\title{} in the preamble. Other preamble content is left unchanged.
+
     Args:
         text: LaTeX source text
         mode: 'new' for new version, 'old' for old version
@@ -208,6 +211,67 @@ def process_changes(text: str, mode: str, custom_commands: list[dict] | None = N
     Returns:
         Processed text
     """
+    # Process changes with scope restrictions (document body + \title{})
+    result = _process_changes_scope(text, mode, custom_commands)
+
+    # Remove empty math environments (also scope-restricted)
+    if remove_empty:
+        result = _remove_empty_math(result)
+
+    return result
+
+
+def _process_changes_scope(text: str, mode: str, custom_commands: list[dict] | None = None) -> str:
+    """Process changes commands only within document body and \\title{} in preamble.
+
+    Args:
+        text: LaTeX source text
+        mode: 'new' for new version, 'old' for old version
+        custom_commands: List of custom command specs from config
+
+    Returns:
+        Processed text with changes only in scoped areas
+    """
+    # Find document environment boundaries
+    doc_match = re.search(r'\\begin\{document\}', text)
+    if not doc_match:
+        # No document environment, only process \title{} in preamble
+        return _process_title_only(text, mode, custom_commands)
+
+    doc_start = doc_match.end()
+    doc_end_match = re.search(r'\\end\{document\}', text[doc_start:])
+    if not doc_end_match:
+        # No \end{document} found, only process \title{} in preamble
+        return _process_title_only(text, mode, custom_commands)
+
+    doc_end = doc_start + doc_end_match.start()
+
+    # Split into preamble, document body, and post-document
+    preamble = text[:doc_start]
+    doc_body = text[doc_start:doc_end]
+    post_doc = text[doc_end:]
+
+    # Process changes in document body
+    doc_body = _process_changes_unconditional(doc_body, mode, custom_commands)
+
+    # Process \title{} in preamble
+    preamble = _process_title_only(preamble, mode, custom_commands)
+
+    return preamble + doc_body + post_doc
+
+
+def _process_title_only(text: str, mode: str, custom_commands: list[dict] | None = None) -> str:
+    """Process changes commands only within \\title{} in the given text."""
+    def _replace_title(match: re.Match) -> str:
+        title_content = match.group(1)
+        processed = _process_changes_unconditional(title_content, mode, custom_commands)
+        return '\\title{' + processed + '}'
+
+    return re.sub(r'\\title\{([^}]*)\}', _replace_title, text)
+
+
+def _process_changes_unconditional(text: str, mode: str, custom_commands: list[dict] | None = None) -> str:
+    """Process changes commands in text without scope restrictions."""
     result = []
     i = 0
 
@@ -248,14 +312,16 @@ def process_changes(text: str, mode: str, custom_commands: list[dict] | None = N
             if cmd_match == '\\added':
                 content, end_pos = _extract_brace_content(text, pos)
                 if mode == 'new':
-                    result.append(content)
+                    # Recursively process inner commands
+                    result.append(_process_changes_unconditional(content, mode, custom_commands))
                 # For 'old' mode, skip entirely (don't append anything)
                 i = end_pos
 
             elif cmd_match == '\\deleted':
                 content, end_pos = _extract_brace_content(text, pos)
                 if mode == 'old':
-                    result.append(content)
+                    # Recursively process inner commands
+                    result.append(_process_changes_unconditional(content, mode, custom_commands))
                 # For 'new' mode, skip entirely (don't append anything)
                 i = end_pos
 
@@ -269,9 +335,10 @@ def process_changes(text: str, mode: str, custom_commands: list[dict] | None = N
                 if temp_pos < len(text) and text[temp_pos] == '{':
                     old_content, end_pos = _extract_brace_content(text, temp_pos)
                     if mode == 'new':
-                        result.append(new_content)
+                        # Recursively process inner commands
+                        result.append(_process_changes_unconditional(new_content, mode, custom_commands))
                     else:
-                        result.append(old_content)
+                        result.append(_process_changes_unconditional(old_content, mode, custom_commands))
                     i = end_pos
                 else:
                     # Malformed command, keep as-is
@@ -285,7 +352,8 @@ def process_changes(text: str, mode: str, custom_commands: list[dict] | None = N
 
             elif cmd_match == '\\highlight':
                 content, end_pos = _extract_brace_content(text, pos)
-                result.append(content)
+                # Recursively process inner commands
+                result.append(_process_changes_unconditional(content, mode, custom_commands))
                 i = end_pos
 
             else:
@@ -301,9 +369,10 @@ def process_changes(text: str, mode: str, custom_commands: list[dict] | None = N
                     if temp_pos < len(text) and text[temp_pos] == '{':
                         old_content, end_pos = _extract_brace_content(text, temp_pos)
                         if mode == 'new':
-                            result.append(new_content)
+                            # Recursively process inner commands
+                            result.append(_process_changes_unconditional(new_content, mode, custom_commands))
                         else:
-                            result.append(old_content)
+                            result.append(_process_changes_unconditional(old_content, mode, custom_commands))
                         i = end_pos
                     else:
                         result.append(text[i])
@@ -311,7 +380,8 @@ def process_changes(text: str, mode: str, custom_commands: list[dict] | None = N
                 elif cmd_spec['has_new']:
                     # Keep: {new}
                     content, end_pos = _extract_brace_content(text, pos)
-                    result.append(content)
+                    # Recursively process inner commands
+                    result.append(_process_changes_unconditional(content, mode, custom_commands))
                     i = end_pos
                 elif cmd_spec['has_old']:
                     # Delete: {old}
@@ -324,13 +394,7 @@ def process_changes(text: str, mode: str, custom_commands: list[dict] | None = N
             result.append(text[i])
             i += 1
 
-    processed = ''.join(result)
-
-    # Remove empty math environments if requested
-    if remove_empty:
-        processed = _remove_empty_math(processed)
-
-    return processed
+    return ''.join(result)
 
 
 def _find_included_files(text: str, base_dir: Path) -> list[Path]:
@@ -540,7 +604,7 @@ def expand_and_remove_changes(
     except FileNotFoundError:
         return f"% [file not found: {main_file}]\n"
 
-    # First expand includes, then strip changes
+    # First expand includes recursively (without processing changes)
     pattern = re.compile(r'(\\(?:include|input))\s*\{([^}]+)\}')
 
     def _replace(match: re.Match) -> str:
@@ -549,17 +613,51 @@ def expand_and_remove_changes(
         if not file_ref.endswith('.tex'):
             file_ref += '.tex'
         ref_path = (root_dir / file_ref).resolve()
-        expanded = expand_and_remove_changes(ref_path, mode, visited, root_dir, custom_commands, remove_empty)
+        expanded = _expand_includes_only(ref_path, visited, root_dir)
         if cmd == '\\include':
             return f"\\clearpage\n{expanded}\\clearpage\n"
         return expanded
 
     expanded = pattern.sub(_replace, content)
+    # Now process changes on the fully expanded text
     processed = process_changes(expanded, mode, custom_commands, remove_empty)
     processed = _remove_usepackage_changes(processed)
     # Preserve line structure: replace lines that became empty with % comments
     processed = _preserve_deleted_lines(expanded, processed)
     return processed
+
+
+def _expand_includes_only(
+    file_path: Path,
+    visited: set[Path],
+    root_dir: Path,
+) -> str:
+    """Recursively expand \\input/\\include without processing changes."""
+    file_path = file_path.resolve()
+
+    if file_path in visited:
+        return "% [circular include skipped]\n"
+    visited.add(file_path)
+
+    try:
+        content = file_path.read_text(encoding='utf-8')
+    except FileNotFoundError:
+        return f"% [file not found: {file_path}]\n"
+
+    pattern = re.compile(r'(\\(?:include|input))\s*\{([^}]+)\}')
+
+    def _replace(match: re.Match) -> str:
+        cmd = match.group(1)
+        file_ref = match.group(2).strip()
+        if not file_ref.endswith('.tex'):
+            file_ref += '.tex'
+        ref_path = (root_dir / file_ref).resolve()
+        expanded = _expand_includes_only(ref_path, visited, root_dir)
+        if cmd == '\\include':
+            return f"\\clearpage\n{expanded}\\clearpage\n"
+        return expanded
+
+    return pattern.sub(_replace, content)
 
 
 def show_diff(original: str, processed: str, file_path: str) -> str:
