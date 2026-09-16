@@ -296,11 +296,44 @@ def main():
     cli()
 
 
+def _load_project_config(config_path: str) -> dict:
+    """Load tex2ast.config.py file and return the tex2ast_config dict.
+
+    Args:
+        config_path: Path to the config .py file
+
+    Returns:
+        The tex2ast_config dictionary
+
+    Raises:
+        FileNotFoundError: if config file doesn't exist
+        ValueError: if config file doesn't define tex2ast_config
+    """
+    import importlib.util
+
+    config_path = Path(config_path).resolve()
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+
+    # Load the config as a Python module
+    spec = importlib.util.spec_from_file_location("tex2ast_project_config", config_path)
+    if spec is None or spec.loader is None:
+        raise ValueError(f"Cannot load config file: {config_path}")
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    if not hasattr(module, 'tex2ast_config'):
+        raise ValueError(f"Config file {config_path} does not define 'tex2ast_config'")
+
+    return module.tex2ast_config
+
+
 @cli.command('remove-changes')
 @click.option('--input', '-i', 'input_file',
               type=click.Path(exists=True),
-              required=True,
-              help='Input LaTeX file path')
+              required=False,
+              help='Input LaTeX file path (required unless --project specifies input_tex)')
 @click.option('--output', '-o', 'output_file',
               type=click.Path(),
               help='Output file path (default: <input>_new.tex or <input>_old.tex)')
@@ -317,12 +350,16 @@ def main():
 @click.option('--changes-list',
               default=None,
               help='Path to changes config file, or "none" to disable custom commands')
-@click.option('--remove-empty',
+@click.option('--remove-empty-math',
               is_flag=True, default=False,
               help='Remove empty \\[...\\] and equation environments')
+@click.option('--project', 'project_config',
+              default=None,
+              help='Path to tex2ast.config.py for project-level settings')
 def remove_changes(input_file: str, output_file: Optional[str],
                    mode_old: bool, print_change: Optional[str], encoding: str,
-                   changes_list: Optional[str], remove_empty: bool):
+                   changes_list: Optional[str], remove_empty_math: bool,
+                   project_config: Optional[str]):
     """Remove changes package markup from LaTeX files.
 
     Supports \\added, \\deleted, \\replaced, \\comment, \\highlight commands.
@@ -347,10 +384,44 @@ def remove_changes(input_file: str, output_file: Optional[str],
 
         tex2ast remove-changes -i document.tex --changes-list=myconfig.txt
 
-        tex2ast remove-changes -i document.tex --remove-empty
+        tex2ast remove-changes -i document.tex --remove-empty-math
+
+        tex2ast remove-changes --project tex2ast.config.py
     """
     from pathlib import Path
     from .remove_changes import get_changes_commands
+
+    # Load project config if specified
+    config_overrides = {}
+    if project_config:
+        config = _load_project_config(project_config)
+        config_overrides = config
+
+    # Apply config defaults (CLI options take precedence)
+    config_dir = Path(project_config).resolve().parent if project_config else None
+    if 'input_tex' in config_overrides and not input_file:
+        input_file = config_overrides['input_tex']
+        if config_dir and not Path(input_file).is_absolute():
+            input_file = str(config_dir / input_file)
+    if 'output_tex' in config_overrides and not output_file:
+        output_file = config_overrides['output_tex']
+        if config_dir and not Path(output_file).is_absolute():
+            output_file = str(config_dir / output_file)
+    if 'remove_empty_math' in config_overrides and not remove_empty_math:
+        remove_empty_math = config_overrides['remove_empty_math']
+
+    # Validate input file
+    if not input_file:
+        click.echo("Error: --input is required (or specify input_tex in project config)", err=True)
+        sys.exit(1)
+
+    # Handle changes_list from config (as inline text, not file path)
+    if 'changes_list' in config_overrides and changes_list is None:
+        # Write the changes_list text to a temp file and use it
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+            f.write(config_overrides['changes_list'])
+            changes_list = f.name
 
     mode = 'old' if mode_old else 'new'
     input_path = Path(input_file).resolve()
@@ -364,7 +435,7 @@ def remove_changes(input_file: str, output_file: Optional[str],
         output_file = str(input_path.parent / (input_path.stem + suffix + '.tex'))
 
     # Expand includes and strip changes
-    result = expand_and_remove_changes(input_path, mode, custom_commands=custom_commands, remove_empty=remove_empty)
+    result = expand_and_remove_changes(input_path, mode, custom_commands=custom_commands, remove_empty=remove_empty_math)
     output_path = Path(output_file)
     output_path.write_text(result, encoding=encoding)
 
@@ -380,7 +451,7 @@ def remove_changes(input_file: str, output_file: Optional[str],
             click.echo(
                 expand_and_remove_changes(
                     input_path, print_mode, custom_commands=custom_commands,
-                    remove_empty=remove_empty
+                    remove_empty=remove_empty_math
                 ),
                 nl=False
             )

@@ -62,7 +62,8 @@ tex2ast remove-changes -i document.tex --print_change new   # also print to stdo
 tex2ast remove-changes -i document.tex --print_change no    # silent
 tex2ast remove-changes -i document.tex --changes-list=none         # disable custom commands
 tex2ast remove-changes -i document.tex --changes-list=myconfig.txt # use custom config
-tex2ast remove-changes -i document.tex --remove-empty           # remove empty math environments
+tex2ast remove-changes -i document.tex --remove-empty-math           # remove empty math environments
+tex2ast remove-changes --project tex2ast.config.py     # use project config file
 ```
 
 | Command | default (new) | `--old` |
@@ -90,6 +91,25 @@ Default commands:
 \tG{new}
 \replaceG{new}{old}
 ```
+
+#### Project config file
+
+A `tex2ast.config.py` file can define project-level settings:
+
+```python
+tex2ast_config=dict(
+    input_tex="main.tex",
+    output_tex="main_clean.tex",
+    remove_empty_math=True,
+    changes_list=r"""
+    \cancel{old}
+    \tG{new}
+    """,
+)
+```
+
+Run with `tex2ast remove-changes --project tex2ast.config.py`.
+CLI options override config file settings.
 
 ### `tex2ast dependency` - Analyze file dependencies
 
