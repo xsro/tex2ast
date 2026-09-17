@@ -44,7 +44,7 @@ class LatexParser:
     def _cur_pos(self) -> SourcePos:
         """Get current source position."""
         tok = self._current()
-        return SourcePos(line=tok.line, column=tok.column, offset=self.pos)
+        return SourcePos(line=tok.line, column=tok.column, offset=tok.offset)
 
     def _make_range(self, start: SourcePos) -> SourceRange:
         """Make a source range from start to current position."""
@@ -441,7 +441,7 @@ class LatexParser:
 
         self._skip_spaces()
         children = []
-        while self._current().type not in (TokenType.COMMAND, TokenType.BEGIN_ENV, TokenType.END_ENV, TokenType.EOF):
+        while self._current().type not in (TokenType.BEGIN_ENV, TokenType.END_ENV, TokenType.EOF):
             if self._current().type == TokenType.COMMAND and self._current().value == '\\item':
                 break
             node = self._parse_node()

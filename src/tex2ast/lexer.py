@@ -32,6 +32,7 @@ class Token:
     value: str
     line: int
     column: int
+    offset: int = 0
 
 
 class LatexLexer:
@@ -57,36 +58,36 @@ class LatexLexer:
             elif char == '%':
                 self._read_comment()
             elif char == '{':
-                self._add_token(TokenType.OPEN_BRACE, '{')
+                self._add_token(TokenType.OPEN_BRACE, '{', self.line, self.column, self.pos)
                 self._advance()
             elif char == '}':
-                self._add_token(TokenType.CLOSE_BRACE, '}')
+                self._add_token(TokenType.CLOSE_BRACE, '}', self.line, self.column, self.pos)
                 self._advance()
             elif char == '[':
-                self._add_token(TokenType.OPEN_BRACKET, '[')
+                self._add_token(TokenType.OPEN_BRACKET, '[', self.line, self.column, self.pos)
                 self._advance()
             elif char == ']':
-                self._add_token(TokenType.CLOSE_BRACKET, ']')
+                self._add_token(TokenType.CLOSE_BRACKET, ']', self.line, self.column, self.pos)
                 self._advance()
             elif char == '$':
                 self._read_math_shift()
             elif char == '^':
-                self._add_token(TokenType.SUPERSCRIPT, '^')
+                self._add_token(TokenType.SUPERSCRIPT, '^', self.line, self.column, self.pos)
                 self._advance()
             elif char == '_':
-                self._add_token(TokenType.SUBSCRIPT, '_')
+                self._add_token(TokenType.SUBSCRIPT, '_', self.line, self.column, self.pos)
                 self._advance()
             elif char == '&':
-                self._add_token(TokenType.AMPERSAND, '&')
+                self._add_token(TokenType.AMPERSAND, '&', self.line, self.column, self.pos)
                 self._advance()
             elif char == '~':
-                self._add_token(TokenType.TILDE, '~')
+                self._add_token(TokenType.TILDE, '~', self.line, self.column, self.pos)
                 self._advance()
             elif char == '#':
-                self._add_token(TokenType.TEXT, '#')
+                self._add_token(TokenType.TEXT, '#', self.line, self.column, self.pos)
                 self._advance()
             elif char == '\n':
-                self._add_token(TokenType.NEWLINE, '\n')
+                self._add_token(TokenType.NEWLINE, '\n', self.line, self.column, self.pos)
                 self._advance()
                 self.line += 1
                 self.column = 1
@@ -95,7 +96,7 @@ class LatexLexer:
             else:
                 self._read_text()
 
-        self._add_token(TokenType.EOF, '')
+        self._add_token(TokenType.EOF, '', self.line, self.column, self.pos)
 
     def _advance(self) -> None:
         """Move to next character."""
@@ -109,27 +110,31 @@ class LatexLexer:
             return self.text[pos]
         return ''
 
-    def _add_token(self, type: TokenType, value: str) -> None:
+    def _add_token(self, type: TokenType, value: str, start_line: int = None, start_col: int = None, start_pos: int = None) -> None:
         """Add a token to the token list."""
-        self.tokens.append(Token(type, value, self.line, self.column))
+        line = start_line if start_line is not None else self.line
+        col = start_col if start_col is not None else self.column
+        pos = start_pos if start_pos is not None else self.pos
+        self.tokens.append(Token(type, value, line, col, pos))
 
     def _read_command_or_special(self) -> None:
         """Read a command or special character."""
         start_line = self.line
         start_col = self.column
+        start_pos = self.pos
 
         # Skip the backslash
         self._advance()
 
         if self.pos >= len(self.text):
-            self._add_token(TokenType.BACKSLASH, '\\')
+            self._add_token(TokenType.BACKSLASH, '\\', start_line, start_col, start_pos)
             return
 
         char = self._peek()
 
         # Special characters
         if char in '#$%&\\^_{}~':
-            self._add_token(TokenType.COMMAND, '\\' + char)
+            self._add_token(TokenType.COMMAND, '\\' + char, start_line, start_col, start_pos)
             self._advance()
             return
 
@@ -137,12 +142,12 @@ class LatexLexer:
         if char == '\\':
             self._advance()
             if self._peek() == '\n':
-                self._add_token(TokenType.COMMAND, '\\\\')
+                self._add_token(TokenType.COMMAND, '\\\\', start_line, start_col, start_pos)
                 self._advance()
                 self.line += 1
                 self.column = 1
             else:
-                self._add_token(TokenType.COMMAND, '\\\\')
+                self._add_token(TokenType.COMMAND, '\\\\', start_line, start_col, start_pos)
             return
 
         # Regular command
@@ -159,7 +164,7 @@ class LatexLexer:
                     self._advance()  # skip {
                     env_name = self._read_until('}')
                     self._advance()  # skip }
-                    self._add_token(TokenType.BEGIN_ENV, env_name)
+                    self._add_token(TokenType.BEGIN_ENV, env_name, start_line, start_col, start_pos)
                     return
             elif command == 'end':
                 self._skip_spaces()
@@ -167,50 +172,59 @@ class LatexLexer:
                     self._advance()  # skip {
                     env_name = self._read_until('}')
                     self._advance()  # skip }
-                    self._add_token(TokenType.END_ENV, env_name)
+                    self._add_token(TokenType.END_ENV, env_name, start_line, start_col, start_pos)
                     return
 
-            self._add_token(TokenType.COMMAND, '\\' + command)
+            self._add_token(TokenType.COMMAND, '\\' + command, start_line, start_col, start_pos)
             return
 
         # Single non-alpha character command (like \, \; \! etc.)
-        self._add_token(TokenType.COMMAND, '\\' + char)
+        self._add_token(TokenType.COMMAND, '\\' + char, start_line, start_col, start_pos)
         self._advance()
 
     def _read_comment(self) -> None:
         """Read a comment until end of line."""
         start = self.pos
+        start_line = self.line
+        start_col = self.column
         while self.pos < len(self.text) and self.text[self.pos] != '\n':
             self._advance()
         comment = self.text[start:self.pos]
-        self._add_token(TokenType.COMMENT, comment)
+        self._add_token(TokenType.COMMENT, comment, start_line, start_col, start)
 
     def _read_math_shift(self) -> None:
         """Read $ or $$."""
+        start_line = self.line
+        start_col = self.column
+        start_pos = self.pos
         self._advance()
         if self._peek() == '$':
             self._advance()
-            self._add_token(TokenType.MATH_SHIFT, '$$')
+            self._add_token(TokenType.MATH_SHIFT, '$$', start_line, start_col, start_pos)
         else:
-            self._add_token(TokenType.MATH_SHIFT, '$')
+            self._add_token(TokenType.MATH_SHIFT, '$', start_line, start_col, start_pos)
 
     def _read_space(self) -> None:
         """Read whitespace (not newline)."""
         start = self.pos
+        start_line = self.line
+        start_col = self.column
         while self.pos < len(self.text) and self.text[self.pos].isspace() and self.text[self.pos] != '\n':
             self._advance()
         space = self.text[start:self.pos]
         if space:
-            self._add_token(TokenType.SPACE, space)
+            self._add_token(TokenType.SPACE, space, start_line, start_col, start)
 
     def _read_text(self) -> None:
         """Read plain text until special character."""
         start = self.pos
+        start_line = self.line
+        start_col = self.column
         while self.pos < len(self.text) and not self._is_special(self.text[self.pos]):
             self._advance()
         text = self.text[start:self.pos]
         if text:
-            self._add_token(TokenType.TEXT, text)
+            self._add_token(TokenType.TEXT, text, start_line, start_col, start)
 
     def _is_special(self, char: str) -> bool:
         """Check if character is special."""

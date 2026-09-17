@@ -13,6 +13,7 @@ from .parser import LatexParser
 from .serializer import LatexSerializer
 from .ast_nodes import LatexAST, ASTNode, SourcePos, SourceRange
 from .remove_changes import expand_and_remove_changes
+from .ast_remove_changes import ast_remove_changes as ast_remove_changes_ast, parse_changes_list
 from .dependency import collect_all_dependencies, find_unreferenced_files, format_dependencies
 from .bib_parser import extract_cited_entries, format_bib_entries, _find_bib_files
 from .build import run_build, pack_dependency_files, extract_zip_project, expand_steps, TOOL_COMMANDS, STEP_ALIASES
@@ -457,6 +458,148 @@ def remove_changes(input_file: str, output_file: Optional[str],
             click.echo(
                 expand_and_remove_changes(
                     input_path, print_mode, custom_commands=custom_commands,
+                    remove_empty=remove_empty_math
+                ),
+                nl=False
+            )
+    else:
+        click.echo(f"Written to: {output_path}")
+
+
+@cli.command('ast-remove-changes')
+@click.option('--input', '-i', 'input_file',
+              type=click.Path(exists=True),
+              required=False,
+              help='Input LaTeX file path (required unless --project specifies input_tex)')
+@click.option('--output', '-o', 'output_file',
+              type=click.Path(),
+              help='Output file path (default: <input>_new.tex or <input>_old.tex)')
+@click.option('--old', 'mode_old',
+              is_flag=True, default=False,
+              help='Generate old version (reject all changes)')
+@click.option('--print_change',
+              type=click.Choice(['new', 'old', 'no']),
+              default=None,
+              help='Print result to stdout: new, old, or no')
+@click.option('--encoding', '-e',
+              default='utf-8',
+              help='File encoding')
+@click.option('--changes-list',
+              default=None,
+              help='Path to changes config file, or "none" to disable custom commands')
+@click.option('--remove-empty-math',
+              is_flag=True, default=False,
+              help='Remove empty \\[...\\] and equation environments')
+@click.option('--project', 'project_config',
+              default=None,
+              help='Path to tex2ast.config.py for project-level settings')
+def ast_remove_changes(input_file: str, output_file: Optional[str],
+                       mode_old: bool, print_change: Optional[str], encoding: str,
+                       changes_list: Optional[str], remove_empty_math: bool,
+                       project_config: Optional[str]):
+    """Remove changes package markup from LaTeX files using AST-based approach.
+
+    Uses AST transformation instead of regex for more robust processing.
+    Supports \\added, \\deleted, \\replaced, \\comment, \\highlight commands.
+    Recursively expands \\include and \\input files into a single output.
+
+    Custom revision commands can be configured via .config/remove-changes.txt.
+    Use --changes-list=none to disable, or --changes-list=<path> for custom config.
+
+    Without -o, defaults to <input>_new.tex or <input>_old.tex.
+
+    Examples:
+
+        tex2ast ast-remove-changes -i document.tex
+
+        tex2ast ast-remove-changes -i document.tex --old
+
+        tex2ast ast-remove-changes -i document.tex -o clean.tex
+
+        tex2ast ast-remove-changes -i document.tex --print_change new
+
+        tex2ast ast-remove-changes -i document.tex --changes-list=none
+
+        tex2ast ast-remove-changes -i document.tex --remove-empty-math
+
+        tex2ast ast-remove-changes --project tex2ast.config.py
+    """
+    from pathlib import Path
+    from .remove_changes import get_changes_commands
+
+    # Load project config if specified
+    config_overrides = {}
+    if project_config:
+        config = _load_project_config(project_config)
+        config_overrides = config
+
+    # Apply config defaults (CLI options take precedence)
+    config_dir = Path(project_config).resolve().parent if project_config else None
+    if 'input_tex' in config_overrides and not input_file:
+        input_file = config_overrides['input_tex']
+        if config_dir and not Path(input_file).is_absolute():
+            input_file = str(config_dir / input_file)
+    if 'output_tex' in config_overrides and not output_file:
+        output_file = config_overrides['output_tex']
+        if config_dir and not Path(output_file).is_absolute():
+            output_file = str(config_dir / output_file)
+    if 'remove_empty_math' in config_overrides and not remove_empty_math:
+        remove_empty_math = config_overrides['remove_empty_math']
+
+    # Validate input file
+    if not input_file:
+        click.echo("Error: --input is required (or specify input_tex in project config)", err=True)
+        sys.exit(1)
+
+    # Handle changes_list from config (as inline text, not file path)
+    if 'changes_list' in config_overrides and changes_list is None:
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+            f.write(config_overrides['changes_list'])
+            changes_list = f.name
+
+    mode = 'old' if mode_old else 'new'
+    input_path = Path(input_file).resolve()
+
+    # Parse changes list for AST version
+    if changes_list == 'none':
+        changes_list_dict = {}
+    elif changes_list:
+        # Read custom changes list from file
+        with open(changes_list, 'r') as f:
+            changes_list_dict = parse_changes_list(f.read())
+    else:
+        # Default changes list
+        changes_list_dict = parse_changes_list('''
+added:added
+deleted:deleted
+replaced:replaced
+comment:comment
+highlight:highlight
+''')
+
+    # Default output: <stem>_new.tex or <stem>_old.tex
+    if not output_file:
+        suffix = '_old' if mode_old else '_new'
+        output_file = str(input_path.parent / (input_path.stem + suffix + '.tex'))
+
+    # Expand includes and strip changes using AST approach
+    result = ast_remove_changes_ast(input_path, mode, changes_list=changes_list_dict, remove_empty=remove_empty_math)
+    output_path = Path(output_file)
+    output_path.write_text(result, encoding=encoding)
+
+    # Print result if requested
+    if print_change == 'no':
+        pass  # silent
+    elif print_change is not None:
+        # Print the requested version (reuse result if same mode)
+        print_mode = print_change
+        if print_mode == mode:
+            click.echo(result, nl=False)
+        else:
+            click.echo(
+                ast_remove_changes_ast(
+                    input_path, print_mode, changes_list=changes_list_dict,
                     remove_empty=remove_empty_math
                 ),
                 nl=False

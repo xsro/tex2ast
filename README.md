@@ -46,7 +46,22 @@ tex2ast tex -i document.json -o document.tex
 diff document.tex document.tex  # identical!
 ```
 
-### `tex2ast remove-changes` - Strip changes package markup
+### `tex2ast ast-remove-changes` - Strip changes package markup (AST-based)
+
+Same as `remove-changes` but uses AST transformation instead of regex for more robust processing.
+
+```bash
+tex2ast ast-remove-changes -i document.tex                  # → document_new.tex
+tex2ast ast-remove-changes -i document.tex --old            # → document_old.tex
+tex2ast ast-remove-changes -i document.tex -o clean.tex     # custom output
+tex2ast ast-remove-changes -i document.tex --print_change new   # also print to stdout
+tex2ast ast-remove-changes -i document.tex --changes-list=none         # disable custom commands
+tex2ast ast-remove-changes -i document.tex --changes-list=myconfig.txt # use custom config
+tex2ast ast-remove-changes -i document.tex --remove-empty-math           # remove empty math environments
+tex2ast ast-remove-changes --project tex2ast.config.py     # use project config file
+```
+
+### `tex2ast remove-changes` - Strip changes package markup (regex-based)
 
 Supports `\added`, `\deleted`, `\replaced`, `\comment`, `\highlight` commands.
 Recursively expands `\include` and `\input` into a single output file.
