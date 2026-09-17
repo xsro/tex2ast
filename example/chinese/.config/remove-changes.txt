@@ -1,9 +1,0 @@
-# Custom changes commands configuration (Chinese project)
-# Format: command_name:type
-# Types: added, deleted, replaced, comment, highlight
-
-# Custom revision commands
-审阅:added
-备注:comment
-废弃:deleted
-过时:deleted
