@@ -1,0 +1,83 @@
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{changes}
+\usepackage{hyperref}
+
+\geometry{margin=1in}
+
+\title{A Sample Research Paper}
+\author{John Doe}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This is a sample abstract for a research paper. It demonstrates the use of the \texttt{changes} package for tracking revisions. The \added{new} findings suggest that this approach is \replaced{effective}{useful} for collaborative writing.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:intro}
+
+The quick brown fox jumps over the lazy dog. This is a \deleted{simple} paragraph that demonstrates text processing.
+
+\subsection{Background}
+\label{subsec:background}
+
+Previous work has been done in this area~\cite{ref2021}. The \highlight{important} contributions include:
+\begin{itemize}
+    \item First contribution
+    \item Second contribution
+    \item \added{Third contribution}
+\end{itemize}
+
+\section{Methodology}
+\label{sec:method}
+
+We used the following equation:
+\begin{equation}
+    E = mc^2
+    \label{eq:energy}
+\end{equation}
+
+The \replaced{old}{new} method produces better results.
+
+\subsection{Data Collection}
+Data was collected from multiple sources. The \cancel{invalid} entries were removed.
+
+\section{Results}
+\label{sec:results}
+
+Our results are shown in Figure~\ref{fig:example}. The data indicates:
+\begin{enumerate}
+    \item First result
+    \item Second result
+    \item Third result
+\end{enumerate}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.5\textwidth]{example.png}
+    \caption{Example figure}
+    \label{fig:example}
+\end{figure}
+
+\section{Discussion}
+\label{sec:discussion}
+
+We discuss our findings here. The \deleted{old interpretation} is no longer valid. The \added{new interpretation} provides better insight.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+In conclusion, this paper demonstrates the effectiveness of the \texttt{changes} package. Future work will explore \replaced{additional}{more} applications.
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}
