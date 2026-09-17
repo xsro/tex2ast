@@ -17,6 +17,7 @@ from .ast_nodes import (
     List, ListItem, Float, Caption,
     FontCommand, Section, Footnote, Hyperlink, Accent,
     NewCommand, NewEnvironment, Space, Length,
+    Table, TableRow, TableCell, Superscript, Subscript,
 )
 from .expand import expand_latex
 from .remove_changes import _remove_empty_math
@@ -25,18 +26,56 @@ from .remove_changes import _remove_empty_math
 def parse_changes_list(content: str) -> dict[str, str]:
     """Parse changes list content into a dict mapping command names to types.
 
-    Format: one per line, `command:type`
-    Lines starting with # are comments.
+    Uses the same format as remove-changes:
+    \\command{old}     - delete content
+    \\command{new}     - keep content
+    \\command{new}{old} - replace (keep new, delete old)
+
+    Returns:
+        Dict mapping command names (without backslash) to types:
+        'added', 'deleted', 'replaced'
     """
-    changes_list = {}
+    result = {}
+
     for line in content.splitlines():
-        line = line.strip()
-        if not line or line.startswith('#'):
+        # Strip inline comments
+        line = line.split('#')[0].strip()
+        if not line:
             continue
-        if ':' in line:
-            cmd, typ = line.split(':', 1)
-            changes_list[cmd.strip()] = typ.strip()
-    return changes_list
+
+        # Must start with backslash
+        if not line.startswith('\\'):
+            continue
+
+        # Determine behavior based on placeholders
+        has_new = '{new}' in line
+        has_old = '{old}' in line
+
+        if not has_new and not has_old:
+            continue
+
+        # Extract command name (everything before first {, [, or whitespace)
+        cmd_end = len(line)
+        for i, ch in enumerate(line):
+            if ch in '{[' or ch.isspace():
+                cmd_end = i
+                break
+
+        cmd_name = line[:cmd_end]
+        if not cmd_name.startswith('\\'):
+            continue
+
+        # Strip backslash for the dict key
+        name = cmd_name[1:] if cmd_name.startswith('\\') else cmd_name
+
+        if has_new and has_old:
+            result[name] = 'replaced'
+        elif has_new:
+            result[name] = 'added'
+        elif has_old:
+            result[name] = 'deleted'
+
+    return result
 
 
 def ast_remove_changes(
@@ -328,6 +367,32 @@ class ChangesTransformer:
                 default=new_default,
                 pos=node.pos,
             )]
+        elif isinstance(node, Table):
+            new_children = self._transform_children(node.children)
+            return [Table(children=new_children, alignment=node.alignment, pos=node.pos)]
+        elif isinstance(node, TableRow):
+            new_cells = []
+            for cell in node.cells:
+                cell_nodes = self._transform_node(cell)
+                new_cells.extend(cell_nodes)
+            return [TableRow(cells=new_cells, pos=node.pos)]
+        elif isinstance(node, TableCell):
+            new_children = self._transform_children(node.children)
+            return [TableCell(children=new_children, pos=node.pos)]
+        elif isinstance(node, Superscript):
+            if node.content:
+                content_nodes = self._transform_node(node.content)
+                if not content_nodes:
+                    return []
+                return [Superscript(content=content_nodes[0] if len(content_nodes) == 1 else Group(content_nodes), pos=node.pos)]
+            return [node]
+        elif isinstance(node, Subscript):
+            if node.content:
+                content_nodes = self._transform_node(node.content)
+                if not content_nodes:
+                    return []
+                return [Subscript(content=content_nodes[0] if len(content_nodes) == 1 else Group(content_nodes), pos=node.pos)]
+            return [node]
         elif isinstance(node, (Space, Length)):
             return [node]
 

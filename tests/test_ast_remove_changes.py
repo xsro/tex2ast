@@ -14,13 +14,7 @@ from tex2ast.ast_nodes import LatexAST
 def process_ast(text: str, mode: str = "new", changes_list: dict = None) -> str:
     """Helper to process changes using AST approach on a text string."""
     if changes_list is None:
-        changes_list = parse_changes_list("""
-added:added
-deleted:deleted
-replaced:replaced
-comment:comment
-highlight:highlight
-""")
+        changes_list = {}
 
     lexer = LatexLexer(text)
     tokens = lexer.get_tokens()
@@ -231,14 +225,14 @@ class TestParseChangesList:
 
     def test_parse_basic(self):
         """Parse basic changes list."""
-        content = "added:added\ndeleted:deleted"
+        content = "\\added{new}\n\\deleted{old}"
         result = parse_changes_list(content)
         assert result["added"] == "added"
         assert result["deleted"] == "deleted"
 
     def test_parse_with_comments(self):
         """Parse changes list with comments."""
-        content = "# comment\nadded:added\n# another\n"
+        content = "# comment\n\\added{new}\n# another\n"
         result = parse_changes_list(content)
         assert result == {"added": "added"}
 
@@ -249,9 +243,27 @@ class TestParseChangesList:
 
     def test_parse_invalid_lines(self):
         """Parse content with invalid lines."""
-        content = "invalid\nno_colon\nadded:added"
+        content = "invalid\nno_colon\n\\added{new}"
         result = parse_changes_list(content)
         assert result == {"added": "added"}
+
+    def test_parse_replaced(self):
+        """Parse replace command."""
+        content = "\\replaceG{new}{old}"
+        result = parse_changes_list(content)
+        assert result["replaceG"] == "replaced"
+
+    def test_parse_custom_added(self):
+        """Parse custom added command."""
+        content = "\\tG{new}"
+        result = parse_changes_list(content)
+        assert result["tG"] == "added"
+
+    def test_parse_custom_deleted(self):
+        """Parse custom deleted command."""
+        content = "\\sG{old}"
+        result = parse_changes_list(content)
+        assert result["sG"] == "deleted"
 
 
 class TestComplexDocuments:

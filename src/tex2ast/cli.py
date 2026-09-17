@@ -591,14 +591,8 @@ def ast_remove_changes(input_file: str, output_file: Optional[str],
         with open(changes_list, 'r') as f:
             changes_list_dict = parse_changes_list(f.read())
     else:
-        # Default changes list
-        changes_list_dict = parse_changes_list('''
-added:added
-deleted:deleted
-replaced:replaced
-comment:comment
-highlight:highlight
-''')
+        # Default changes list (empty - standard commands are handled separately)
+        changes_list_dict = {}
 
     # Default output: <stem>_new.tex or <stem>_old.tex
     if not output_file:
