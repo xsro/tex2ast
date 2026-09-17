@@ -15,6 +15,7 @@ tex2ast_config = {
 review:added
 note:comment
 obsolete:deleted
+cancel:deleted
 ''',
 
     # Remove empty math environments

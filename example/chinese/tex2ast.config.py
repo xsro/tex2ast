@@ -12,9 +12,7 @@ tex2ast_config = {
     # Format: command_name:type (one per line)
     'changes_list': '''
 # Custom changes commands
-审阅:added
-备注:comment
-废弃:deleted
+cancel:deleted
 ''',
 
     # Remove empty math environments

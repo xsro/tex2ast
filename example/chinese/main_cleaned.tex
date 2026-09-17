@@ -1,0 +1,80 @@
+\documentclass[12pt]{ctexart}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+
+\usepackage{hyperref}
+
+\geometry{margin=1in}
+
+\title{一个示例研究论文}
+\author{张三}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+这是一个研究论文的示例摘要。它演示了\texttt{{changes}}包用于跟踪修订的用法。新的发现表明这种方法对协作写作有效。
+\end{abstract}
+
+\section{引言}
+\label{sec:intro}
+
+The quick brown fox jumps over the lazy dog. 这是一个段落，演示文本处理。
+
+\subsection{背景}
+\label{subsec:background}
+
+之前的工作已经在该领域完成~\cite{ref2021}。重要的贡献包括：
+\begin{itemize}\item第一项贡献
+ \item第二项贡献
+ \item第三项贡献
+\end{itemize}
+
+\section{方法}
+\label{sec:method}
+
+我们使用了以下方程：
+\begin{equation}
+ E = mc^2
+ \label{eq:energy}
+\end{equation}
+
+旧方法产生更好的结果。
+
+\subsection{数据收集}
+数据来自多个来源。条目已被删除。
+
+\section{结果}
+\label{sec:results}
+
+我们的结果如图~\ref{fig:example}所示。数据表明：
+\begin{enumerate}\item第一项结果
+ \item第二项结果
+ \item第三项结果
+\end{enumerate}
+
+\begin{figure}
+ \centering
+ \includegraphics[width=0.5\textwidth]{example.png}
+ 
+ 
+\caption{示例图}\label{fig:example}\end{figure}
+
+\section{讨论}
+\label{sec:discussion}
+
+我们在此讨论我们的发现。不再有效。新的解释提供了更好的见解。
+
+\section{结论}
+\label{sec:conclusion}
+
+总之，本文演示了\texttt{{changes}}包的有效性。未来的工作将探索额外的应用。
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}
