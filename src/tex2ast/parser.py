@@ -628,20 +628,13 @@ class LatexParser:
             items = [node for node in children if isinstance(node, ListItem)]
             return List(list_type=env_name, items=items, pos=self._make_range(start))
         elif env_name in self.FLOAT_ENVS:
-            caption = None
-            label = None
-            content = []
-            for child in children:
-                if isinstance(child, Caption):
-                    caption = child
-                elif isinstance(child, Label):
-                    label = child
-                else:
-                    content.append(child)
-            return Float(float_type=env_name, children=content, caption=caption,
-                         label=label.name if label else None, pos=self._make_range(start))
+            return Float(float_type=env_name, children=children,
+                         caption=None, label=None, pos=self._make_range(start))
         elif env_name in self.TABLE_ENVS:
-            return Table(children=children, pos=self._make_range(start))
+            alignment = ''
+            if required_args:
+                alignment = self._extract_text(required_args[0].children)
+            return Table(children=children, alignment=alignment, pos=self._make_range(start))
         else:
             return Environment(name=env_name, arguments=required_args,
                                optional_arguments=optional_args, children=children,

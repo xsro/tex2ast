@@ -138,6 +138,10 @@ class LatexSerializer:
             parts.append(self._serialize_node(opt))
         for arg in node.arguments:
             parts.append(self._serialize_node(arg))
+        # Add a space after argumentless commands whose names end with a letter,
+        # to prevent the command name from merging with following text.
+        if not node.arguments and not node.optional_arguments and node.name and node.name[-1].isalpha():
+            parts.append(' ')
         return ''.join(parts)
 
     def _serialize_group(self, node: Group) -> str:
@@ -201,6 +205,8 @@ class LatexSerializer:
         parts = ['\\item']
         if node.label:
             parts.append(self._serialize_node(node.label))
+        else:
+            parts.append(' ')
         for child in node.children:
             parts.append(self._serialize_node(child))
         return ''.join(parts)
@@ -209,17 +215,14 @@ class LatexSerializer:
         parts = ['\\begin{' + node.float_type + '}']
         for child in node.children:
             parts.append(self._serialize_node(child))
-        if node.caption:
-            parts.append(self._serialize_node(node.caption))
-        if node.label:
-            parts.append('\\label{' + node.label + '}')
         parts.append('\\end{' + node.float_type + '}')
         return ''.join(parts)
 
     def _serialize_table(self, node: Table) -> str:
-        parts = []
+        parts = ['\\begin{tabular}{', node.alignment or '', '}']
         for child in node.children:
             parts.append(self._serialize_node(child))
+        parts.append('\\end{tabular}')
         return ''.join(parts)
 
     def _serialize_graphics(self, node: Graphics) -> str:
