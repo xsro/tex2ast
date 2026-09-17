@@ -336,6 +336,28 @@ def _load_project_config(config_path: str) -> dict:
     return namespace['tex2ast_config']
 
 
+def _get_command_config(config: dict, command_name: str) -> dict:
+    """Extract command-specific config from tex2ast_config.
+
+    Supports two formats:
+    1. Flat format (old): config has keys like 'input_tex', 'output_tex' directly
+    2. Nested format (new): config maps command names to their sub-configs
+       e.g. {'remove-changes': {...}, 'ast-remove-changes': {...}}
+
+    Args:
+        config: The full tex2ast_config dictionary
+        command_name: The CLI command name (e.g. 'remove-changes', 'ast-remove-changes')
+
+    Returns:
+        The command-specific config dictionary
+    """
+    # Check if config uses nested format (maps command names to sub-configs)
+    if command_name in config and isinstance(config[command_name], dict):
+        return config[command_name]
+    # Fall back to flat format (backward compatible)
+    return config
+
+
 @cli.command('remove-changes')
 @click.option('--input', '-i', 'input_file',
               type=click.Path(exists=True),
@@ -402,7 +424,7 @@ def remove_changes(input_file: str, output_file: Optional[str],
     config_overrides = {}
     if project_config:
         config = _load_project_config(project_config)
-        config_overrides = config
+        config_overrides = _get_command_config(config, 'remove-changes')
 
     # Apply config defaults (CLI options take precedence)
     config_dir = Path(project_config).resolve().parent if project_config else None
@@ -531,7 +553,7 @@ def ast_remove_changes(input_file: str, output_file: Optional[str],
     config_overrides = {}
     if project_config:
         config = _load_project_config(project_config)
-        config_overrides = config
+        config_overrides = _get_command_config(config, 'ast-remove-changes')
 
     # Apply config defaults (CLI options take precedence)
     config_dir = Path(project_config).resolve().parent if project_config else None
