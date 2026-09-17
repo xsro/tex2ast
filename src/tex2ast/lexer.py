@@ -16,6 +16,8 @@ class TokenType(Enum):
     TEXT = auto()             # plain text
     COMMENT = auto()          # %...
     MATH_SHIFT = auto()      # $ or $$
+    OPEN_DISPLAY = auto()    # \[
+    CLOSE_DISPLAY = auto()   # \]
     SUPERSCRIPT = auto()     # ^
     SUBSCRIPT = auto()       # _
     AMPERSAND = auto()       # &
@@ -176,6 +178,16 @@ class LatexLexer:
                     return
 
             self._add_token(TokenType.COMMAND, '\\' + command, start_line, start_col, start_pos)
+            return
+
+        # Display math delimiters \[ and \]
+        if char == '[':
+            self._add_token(TokenType.OPEN_DISPLAY, '\\[', start_line, start_col, start_pos)
+            self._advance()
+            return
+        if char == ']':
+            self._add_token(TokenType.CLOSE_DISPLAY, '\\]', start_line, start_col, start_pos)
+            self._advance()
             return
 
         # Single non-alpha character command (like \, \; \! etc.)

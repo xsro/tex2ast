@@ -113,6 +113,9 @@ class LatexParser:
         if token.type == TokenType.MATH_SHIFT:
             return self._parse_math()
 
+        if token.type == TokenType.OPEN_DISPLAY:
+            return self._parse_display_math()
+
         if token.type == TokenType.TEXT:
             return self._parse_text()
 
@@ -143,7 +146,19 @@ class LatexParser:
             return SpecialChar('~', pos=self._make_range(start))
 
         if token.type == TokenType.OPEN_BRACKET:
-            return self._parse_optional_group()
+            # A bare [ in text/group content is a literal character, not an
+            # optional argument. Optional arguments are parsed only in the
+            # specific command/environment parsers that call
+            # _parse_optional_group explicitly (e.g. \cite[opt]{key},
+            # \includegraphics[opts]{file}, \begin{figure}[!htb]).
+            start = self._cur_pos()
+            self._advance()
+            return Text('[', pos=self._make_range(start))
+
+        if token.type == TokenType.CLOSE_BRACKET:
+            start = self._cur_pos()
+            self._advance()
+            return Text(']', pos=self._make_range(start))
 
         self._advance()
         return None
@@ -258,21 +273,19 @@ class LatexParser:
 
     def _parse_regular_command(self, cmd_name: str, start: SourcePos) -> Command:
         star = False
+        self._skip_spaces()
         if self._current().type == TokenType.TEXT and self._current().value == '*':
             self._advance()
             star = True
 
-        optional_args = []
         required_args = []
 
-        while self._current().type == TokenType.OPEN_BRACKET:
-            optional_args.append(self._parse_optional_group())
-
+        self._skip_spaces()
         while self._current().type == TokenType.OPEN_BRACE:
             required_args.append(self._parse_group())
 
         return Command(name=cmd_name, arguments=required_args,
-                       optional_arguments=optional_args, star=star,
+                       optional_arguments=[], star=star,
                        pos=self._make_range(start))
 
     def _parse_section(self, cmd_name: str, start: SourcePos) -> Section:
@@ -300,6 +313,7 @@ class LatexParser:
 
     def _parse_citation(self, start: SourcePos) -> Citation:
         optional = None
+        self._skip_spaces()
         if self._current().type == TokenType.OPEN_BRACKET:
             optional_group = self._parse_optional_group()
             optional = self._extract_text(optional_group.children)
@@ -329,6 +343,7 @@ class LatexParser:
 
     def _parse_graphics(self, start: SourcePos) -> Graphics:
         options = []
+        self._skip_spaces()
         if self._current().type == TokenType.OPEN_BRACKET:
             options.append(self._parse_optional_group())
 
@@ -340,6 +355,7 @@ class LatexParser:
 
     def _parse_caption(self, start: SourcePos) -> Caption:
         short_caption = None
+        self._skip_spaces()
         if self._current().type == TokenType.OPEN_BRACKET:
             short_caption = self._parse_optional_group()
 
@@ -401,6 +417,7 @@ class LatexParser:
 
     def _parse_usepackage(self, start: SourcePos) -> Package:
         options = []
+        self._skip_spaces()
         if self._current().type == TokenType.OPEN_BRACKET:
             opt_group = self._parse_optional_group()
             opt_text = self._extract_text(opt_group.children)
@@ -414,6 +431,7 @@ class LatexParser:
 
     def _parse_documentclass(self, start: SourcePos) -> DocumentClass:
         options = []
+        self._skip_spaces()
         if self._current().type == TokenType.OPEN_BRACKET:
             opt_group = self._parse_optional_group()
             opt_text = self._extract_text(opt_group.children)
@@ -436,6 +454,7 @@ class LatexParser:
 
     def _parse_item(self, start: SourcePos) -> ListItem:
         label = None
+        self._skip_spaces()
         if self._current().type == TokenType.OPEN_BRACKET:
             label = self._parse_optional_group()
 
@@ -500,9 +519,19 @@ class LatexParser:
 
         return InlineMath(children=[], delimiter='$', pos=self._make_range(start))
 
-    def _parse_math_content(self) -> list[ASTNode]:
+    def _parse_display_math(self) -> DisplayMath:
+        """Parse \\[...\\] display math."""
+        start = self._cur_pos()
+        self._advance()  # skip OPEN_DISPLAY
+        children = self._parse_math_content(display=True)
+        if self._current().type == TokenType.CLOSE_DISPLAY:
+            self._advance()
+        return DisplayMath(children=children, delimiter='\\[\\]', pos=self._make_range(start))
+
+    def _parse_math_content(self, display: bool = False) -> list[ASTNode]:
         nodes = []
-        while self._current().type not in (TokenType.MATH_SHIFT, TokenType.EOF):
+        stop_types = (TokenType.MATH_SHIFT, TokenType.CLOSE_DISPLAY, TokenType.EOF) if display else (TokenType.MATH_SHIFT, TokenType.EOF)
+        while self._current().type not in stop_types:
             prev_pos = self.pos
             token = self._current()
 
@@ -518,13 +547,21 @@ class LatexParser:
                 nodes.append(self._parse_subscript())
             elif token.type == TokenType.OPEN_BRACE:
                 nodes.append(self._parse_group())
+            elif token.type == TokenType.OPEN_BRACKET:
+                start = self._cur_pos()
+                self._advance()
+                nodes.append(Text('[', pos=self._make_range(start)))
+            elif token.type == TokenType.CLOSE_BRACKET:
+                start = self._cur_pos()
+                self._advance()
+                nodes.append(Text(']', pos=self._make_range(start)))
             elif token.type == TokenType.SPACE:
                 self._advance()
             elif token.type == TokenType.NEWLINE:
                 self._advance()
             else:
                 self._advance()
-            if self.pos == prev_pos and self._current().type not in (TokenType.MATH_SHIFT, TokenType.EOF):
+            if self.pos == prev_pos and self._current().type not in (TokenType.MATH_SHIFT, TokenType.CLOSE_DISPLAY, TokenType.EOF):
                 self._advance()
 
         return nodes
@@ -583,7 +620,10 @@ class LatexParser:
         children = self._parse_environment_content(env_name)
 
         if env_name in self.MATH_ENVS:
-            return MathEnvironment(name=env_name, children=children, pos=self._make_range(start))
+            return MathEnvironment(name=env_name, children=children,
+                                   arguments=required_args,
+                                   optional_arguments=optional_args,
+                                   pos=self._make_range(start))
         elif env_name in self.LIST_ENVS:
             items = [node for node in children if isinstance(node, ListItem)]
             return List(list_type=env_name, items=items, pos=self._make_range(start))
@@ -646,6 +686,19 @@ class LatexParser:
                         break
                 else:
                     self._advance()
+            elif token.type == TokenType.OPEN_BRACKET:
+                # In environment content, a bare [ is literal text, not an
+                # optional argument (those are handled by specific command
+                # parsers). This matters inside math environments like
+                # array, where [l_d, \infty) must not swallow the closing
+                # \end{array} / \end{equation}.
+                start = self._cur_pos()
+                self._advance()
+                nodes.append(Text('[', pos=self._make_range(start)))
+            elif token.type == TokenType.CLOSE_BRACKET:
+                start = self._cur_pos()
+                self._advance()
+                nodes.append(Text(']', pos=self._make_range(start)))
             else:
                 node = self._parse_node()
                 if node:

@@ -211,6 +211,8 @@ class ChangesTransformer:
                 name=node.name,
                 children=new_children,
                 mode=node.mode,
+                arguments=node.arguments,
+                optional_arguments=node.optional_arguments,
                 pos=node.pos,
             )]
         elif isinstance(node, InlineMath):

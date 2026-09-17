@@ -161,6 +161,10 @@ class LatexSerializer:
 
     def _serialize_math_environment(self, node: MathEnvironment) -> str:
         parts = ['\\begin{' + node.name + '}']
+        for opt in node.optional_arguments:
+            parts.append(self._serialize_node(opt))
+        for arg in node.arguments:
+            parts.append(self._serialize_node(arg))
         for child in node.children:
             parts.append(self._serialize_node(child))
         parts.append('\\end{' + node.name + '}')
@@ -172,7 +176,12 @@ class LatexSerializer:
 
     def _serialize_display_math(self, node: DisplayMath) -> str:
         inner = ''.join(self._serialize_node(c) for c in node.children)
-        return '$$' + inner + '$$'
+        if node.delimiter == '$$':
+            return '$$' + inner + '$$'
+        elif node.delimiter == '\\[\\]':
+            return '\\[' + inner + '\\]'
+        else:
+            return node.delimiter + inner + node.delimiter
 
     def _serialize_section(self, node: Section) -> str:
         level_names = {0: 'part', 1: 'chapter', 2: 'section', 3: 'subsection',

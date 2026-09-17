@@ -71,6 +71,8 @@ class MathEnvironment(ASTNode):
     name: str = ""
     children: list[ASTNode] = field(default_factory=list)
     mode: MathMode = MathMode.ENVIRONMENT
+    arguments: list[ASTNode] = field(default_factory=list)
+    optional_arguments: list[ASTNode] = field(default_factory=list)
 
 
 @dataclass
