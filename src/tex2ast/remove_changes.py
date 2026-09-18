@@ -355,9 +355,9 @@ def _process_changes_unconditional(text: str, mode: str, custom_commands: list[d
                 i = end_pos
 
             elif cmd_match == '\\replaced':
-                new_content, end_pos = _extract_brace_content(text, pos)
+                new_content, new_end = _extract_brace_content(text, pos)
                 # Skip whitespace between arguments
-                temp_pos = end_pos
+                temp_pos = new_end
                 while temp_pos < len(text) and text[temp_pos] in ' \t\n':
                     temp_pos += 1
 
@@ -365,10 +365,27 @@ def _process_changes_unconditional(text: str, mode: str, custom_commands: list[d
                     old_content, end_pos = _extract_brace_content(text, temp_pos)
                     if mode == 'new':
                         # Recursively process inner commands
-                        result.append(_process_changes_unconditional(new_content, mode, custom_commands))
+                        processed_new = _process_changes_unconditional(new_content, mode, custom_commands)
+                        result.append(processed_new)
+                        # If old content was a full-line delete, preserve paragraph break
+                        if _is_full_line_delete(text, temp_pos, end_pos):
+                            result.append('%')
+                        i = end_pos
+                        # Skip extra newline if kept content ends with newline and next char is newline
+                        # This prevents double newlines when the brace content ends with \n and the
+                        # following text also starts with \n (e.g., when old content is on its own line)
+                        if processed_new.endswith('\n') and i < len(text) and text[i] == '\n':
+                            i += 1
                     else:
-                        result.append(_process_changes_unconditional(old_content, mode, custom_commands))
-                    i = end_pos
+                        processed_old = _process_changes_unconditional(old_content, mode, custom_commands)
+                        result.append(processed_old)
+                        # If new content was a full-line delete, preserve paragraph break
+                        if _is_full_line_delete(text, pos, new_end):
+                            result.append('%')
+                        i = end_pos
+                        # Skip extra newline if kept content ends with newline and next char is newline
+                        if processed_old.endswith('\n') and i < len(text) and text[i] == '\n':
+                            i += 1
                 else:
                     # Malformed command, keep as-is
                     result.append(text[i])
@@ -391,18 +408,33 @@ def _process_changes_unconditional(text: str, mode: str, custom_commands: list[d
 
                 if cmd_spec['has_new'] and cmd_spec['has_old']:
                     # Replace: {new}{old}
-                    new_content, end_pos = _extract_brace_content(text, pos)
-                    temp_pos = end_pos
+                    new_content, new_end = _extract_brace_content(text, pos)
+                    temp_pos = new_end
                     while temp_pos < len(text) and text[temp_pos] in ' \t\n':
                         temp_pos += 1
                     if temp_pos < len(text) and text[temp_pos] == '{':
                         old_content, end_pos = _extract_brace_content(text, temp_pos)
                         if mode == 'new':
                             # Recursively process inner commands
-                            result.append(_process_changes_unconditional(new_content, mode, custom_commands))
+                            processed_new = _process_changes_unconditional(new_content, mode, custom_commands)
+                            result.append(processed_new)
+                            # If old content was a full-line delete, preserve paragraph break
+                            if _is_full_line_delete(text, temp_pos, end_pos):
+                                result.append('%')
+                            i = end_pos
+                            # Skip extra newline if kept content ends with newline and next char is newline
+                            if processed_new.endswith('\n') and i < len(text) and text[i] == '\n':
+                                i += 1
                         else:
-                            result.append(_process_changes_unconditional(old_content, mode, custom_commands))
-                        i = end_pos
+                            processed_old = _process_changes_unconditional(old_content, mode, custom_commands)
+                            result.append(processed_old)
+                            # If new content was a full-line delete, preserve paragraph break
+                            if _is_full_line_delete(text, pos, new_end):
+                                result.append('%')
+                            i = end_pos
+                            # Skip extra newline if kept content ends with newline and next char is newline
+                            if processed_old.endswith('\n') and i < len(text) and text[i] == '\n':
+                                i += 1
                     else:
                         result.append(text[i])
                         i += 1
@@ -462,12 +494,12 @@ def _remove_usepackage_changes(text: str) -> str:
 
 def _remove_empty_math_simple(text: str) -> str:
     """Remove empty \\[...\\] and equation environments (unconditional)."""
-    # Remove empty \[...\]
-    text = re.sub(r'\\\[\s*\\\]', '', text)
+    # Remove empty \[...\] (allowing % comments and whitespace inside)
+    text = re.sub(r'\s*\\\[\s*(?:%[^\n]*\n?\s*)*\\\]', '', text)
     # Remove empty \begin{equation}...\end{equation}
-    text = re.sub(r'\\begin\{equation\}\s*\\end\{equation\}', '', text)
+    text = re.sub(r'\s*\\begin\{equation\}\s*(?:%[^\n]*\n?\s*)*\\end\{equation\}', '', text)
     # Remove empty \begin{equation*}...\end{equation*}
-    text = re.sub(r'\\begin\{equation\*\}\s*\\end\{equation\*\}', '', text)
+    text = re.sub(r'\s*\\begin\{equation\*\}\s*(?:%[^\n]*\n?\s*)*\\end\{equation\*\}', '', text)
     return text
 
 

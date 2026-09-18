@@ -497,7 +497,8 @@ class ChangesTransformer:
         if len(cmd.arguments) >= 2:
             new_arg = cmd.arguments[0] if self.mode == 'new' else cmd.arguments[1]
             if isinstance(new_arg, Group):
-                return self._transform_children(new_arg.children)
+                children = self._transform_children(new_arg.children)
+                return self._strip_trailing_newline_if_needed(children, cmd)
             return self._transform_node(new_arg)
         else:
             # Malformed command, keep as-is
@@ -523,7 +524,8 @@ class ChangesTransformer:
             if len(cmd.arguments) >= 2:
                 new_arg = cmd.arguments[0] if self.mode == 'new' else cmd.arguments[1]
                 if isinstance(new_arg, Group):
-                    return self._transform_children(new_arg.children)
+                    children = self._transform_children(new_arg.children)
+                    return self._strip_trailing_newline_if_needed(children, cmd)
                 return self._transform_node(new_arg)
             else:
                 return [cmd]
@@ -600,3 +602,26 @@ class ChangesTransformer:
             return False
 
         return True
+
+    def _is_followed_by_newline(self, cmd: Command) -> bool:
+        """Check if the command is immediately followed by a newline in the source text."""
+        if cmd.pos is None:
+            return False
+        source = self.source_text
+        end_offset = cmd.pos.end.offset
+        return end_offset < len(source) and source[end_offset] == '\n'
+
+    def _strip_trailing_newline_if_needed(self, nodes: list[ASTNode], cmd: Command) -> list[ASTNode]:
+        """Strip trailing newline from the last Text node if the command is followed by a newline.
+
+        This prevents double newlines when the kept content ends with '\n' (because '}' is on
+        the next line) and the command is also followed by '\n' (the newline after the
+        removed content's '}'). In the original source these were separated by the removed
+        content, so they shouldn't create a blank line.
+        """
+        if not self._is_followed_by_newline(cmd) or not nodes:
+            return nodes
+        last = nodes[-1]
+        if isinstance(last, Text) and last.content.endswith('\n'):
+            nodes[-1] = Text(last.content[:-1], pos=last.pos)
+        return nodes
