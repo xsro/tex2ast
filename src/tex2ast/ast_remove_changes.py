@@ -78,6 +78,201 @@ def parse_changes_list(content: str) -> dict[str, str]:
     return result
 
 
+def _apply_changes_as_text(original_ast: LatexAST, new_ast: LatexAST, source_text: str, changes_list: dict[str, str] | None = None) -> str:
+    """Build output by copying original source text, excluding removed changes parts.
+
+    Walks the original AST to find changes commands and determines what text
+    to keep/delete. Then builds the output by copying the original source text
+    while excluding ranges that should be removed.
+
+    Args:
+        original_ast: The original AST (before transformation)
+        new_ast: The transformed AST (after transformation)
+        source_text: The original source text
+        changes_list: Custom changes command definitions
+
+    Returns:
+        LaTeX text with changes applied and original formatting preserved
+    """
+    # Collect ranges of text that should be excluded (removed changes command parts)
+    excluded_ranges = []
+
+    # Find document environment and title in the original AST
+    document_env = None
+    title_cmd = None
+    for child in original_ast.children:
+        if isinstance(child, Environment) and child.name == 'document':
+            document_env = child
+        elif isinstance(child, Command) and child.name == 'title':
+            title_cmd = child
+
+    def collect_excluded_ranges(nodes, in_document=False):
+        """Collect ranges of changes command parts that should be excluded.
+        
+        Only processes changes commands inside the document environment or title,
+        matching the behavior of ChangesTransformer.
+        """
+        for node in nodes:
+            if isinstance(node, Command):
+                cmd_name = node.name
+
+                # Check if this is a changes command that should be processed
+                is_changes_cmd = cmd_name in ('added', 'deleted', 'replaced', 'comment')
+                if changes_list and cmd_name in changes_list:
+                    is_changes_cmd = True
+
+                if is_changes_cmd and in_document:
+                    if cmd_name == 'deleted' or cmd_name == 'comment':
+                        if node.pos:
+                            excluded_ranges.append((node.pos.start.offset, node.pos.end.offset))
+
+                    elif cmd_name == 'added':
+                        if node.arguments:
+                            arg = node.arguments[0]
+                            if isinstance(arg, Group) and node.pos and arg.pos:
+                                excluded_ranges.append((node.pos.start.offset, arg.pos.start.offset + 1))
+                                excluded_ranges.append((arg.pos.end.offset - 1, arg.pos.end.offset))
+
+                    elif cmd_name == 'replaced':
+                        if len(node.arguments) >= 2:
+                            new_arg = node.arguments[0]
+                            old_arg = node.arguments[1]
+                            if isinstance(new_arg, Group) and isinstance(old_arg, Group) and node.pos and new_arg.pos and old_arg.pos:
+                                excluded_ranges.append((node.pos.start.offset, new_arg.pos.start.offset + 1))
+                                excluded_ranges.append((new_arg.pos.end.offset - 1, old_arg.pos.start.offset + 1))
+                                excluded_ranges.append((old_arg.pos.start.offset + 1, old_arg.pos.end.offset - 1))
+                                excluded_ranges.append((old_arg.pos.end.offset - 1, old_arg.pos.end.offset))
+
+                    elif changes_list and cmd_name in changes_list:
+                        cmd_type = changes_list[cmd_name]
+                        if cmd_type == 'deleted':
+                            if node.pos:
+                                excluded_ranges.append((node.pos.start.offset, node.pos.end.offset))
+                        elif cmd_type == 'added':
+                            if node.arguments:
+                                arg = node.arguments[0]
+                                if isinstance(arg, Group) and node.pos and arg.pos:
+                                    excluded_ranges.append((node.pos.start.offset, arg.pos.start.offset + 1))
+                                    excluded_ranges.append((arg.pos.end.offset - 1, arg.pos.end.offset))
+                        elif cmd_type == 'replaced':
+                            if len(node.arguments) >= 2:
+                                new_arg = node.arguments[0]
+                                old_arg = node.arguments[1]
+                                if isinstance(new_arg, Group) and isinstance(old_arg, Group) and node.pos and new_arg.pos and old_arg.pos:
+                                    excluded_ranges.append((node.pos.start.offset, new_arg.pos.start.offset + 1))
+                                    excluded_ranges.append((new_arg.pos.end.offset - 1, old_arg.pos.start.offset + 1))
+                                    excluded_ranges.append((old_arg.pos.start.offset + 1, old_arg.pos.end.offset - 1))
+                                    excluded_ranges.append((old_arg.pos.end.offset - 1, old_arg.pos.end.offset))
+
+                # Recurse into arguments (always, to find nested changes commands)
+                for arg in node.arguments:
+                    if hasattr(arg, 'children') and arg.children:
+                        collect_excluded_ranges(arg.children, in_document)
+
+            elif isinstance(node, Package):
+                if node.name == 'changes':
+                    if node.pos:
+                        excluded_ranges.append((node.pos.start.offset, node.pos.end.offset))
+
+            elif isinstance(node, Group):
+                collect_excluded_ranges(node.children, in_document)
+            elif isinstance(node, Environment):
+                # Only process if inside document or this IS the document environment
+                is_doc = in_document or (document_env and node is document_env)
+                collect_excluded_ranges(node.children, is_doc)
+            elif isinstance(node, MathEnvironment):
+                is_doc = in_document or (document_env and node is document_env)
+                collect_excluded_ranges(node.children, is_doc)
+            elif isinstance(node, InlineMath):
+                collect_excluded_ranges(node.children, in_document)
+            elif isinstance(node, DisplayMath):
+                collect_excluded_ranges(node.children, in_document)
+            elif isinstance(node, List):
+                collect_excluded_ranges(node.items, in_document)
+            elif isinstance(node, Float):
+                collect_excluded_ranges(node.children, in_document)
+                if node.caption:
+                    collect_excluded_ranges([node.caption], in_document)
+            elif isinstance(node, Table):
+                collect_excluded_ranges(node.children, in_document)
+            elif isinstance(node, ListItem):
+                collect_excluded_ranges(node.children, in_document)
+            elif isinstance(node, Section):
+                if node.title:
+                    collect_excluded_ranges([node.title], in_document)
+            elif isinstance(node, Footnote):
+                if node.content:
+                    collect_excluded_ranges([node.content], in_document)
+            elif isinstance(node, Caption):
+                if node.content:
+                    collect_excluded_ranges([node.content], in_document)
+                if node.short_caption:
+                    collect_excluded_ranges([node.short_caption], in_document)
+            elif isinstance(node, Hyperlink):
+                if node.text:
+                    collect_excluded_ranges([node.text], in_document)
+            elif isinstance(node, Accent):
+                if node.content:
+                    collect_excluded_ranges([node.content], in_document)
+            elif isinstance(node, NewCommand):
+                if node.definition:
+                    collect_excluded_ranges([node.definition], in_document)
+                if node.default:
+                    collect_excluded_ranges([node.default], in_document)
+            elif isinstance(node, NewEnvironment):
+                if node.before:
+                    collect_excluded_ranges([node.before], in_document)
+                if node.after:
+                    collect_excluded_ranges([node.after], in_document)
+                if node.default:
+                    collect_excluded_ranges([node.default], in_document)
+            elif isinstance(node, Superscript):
+                if node.content:
+                    collect_excluded_ranges([node.content], in_document)
+            elif isinstance(node, Subscript):
+                if node.content:
+                    collect_excluded_ranges([node.content], in_document)
+            elif isinstance(node, FontCommand):
+                if node.content:
+                    collect_excluded_ranges([node.content], in_document)
+
+    # Process title command separately
+    if title_cmd:
+        collect_excluded_ranges([title_cmd], in_document=True)
+
+    # Process document environment
+    if document_env:
+        collect_excluded_ranges([document_env], in_document=True)
+
+    # Remove \usepackage{changes}
+    for child in original_ast.children:
+        if isinstance(child, Package) and child.name == 'changes':
+            if child.pos:
+                excluded_ranges.append((child.pos.start.offset, child.pos.end.offset))
+
+    # Sort and merge excluded ranges
+    excluded_ranges.sort(key=lambda x: x[0])
+    merged_excluded = []
+    for start, end in excluded_ranges:
+        if merged_excluded and start <= merged_excluded[-1][1]:
+            merged_excluded[-1] = (merged_excluded[-1][0], max(merged_excluded[-1][1], end))
+        else:
+            merged_excluded.append((start, end))
+    excluded_ranges = merged_excluded
+
+    # Build output by copying source text, excluding removed ranges
+    result = []
+    pos = 0
+    for ex_start, ex_end in excluded_ranges:
+        if ex_start > pos:
+            result.append(source_text[pos:ex_start])
+        pos = max(pos, ex_end)
+    if pos < len(source_text):
+        result.append(source_text[pos:])
+
+    return ''.join(result)
+
+
 def ast_remove_changes(
     main_file: Path,
     mode: str,
@@ -109,9 +304,8 @@ def ast_remove_changes(
     transformer = ChangesTransformer(mode, changes_list or {}, expanded)
     new_ast = transformer.transform(ast)
 
-    # Step 4: Serialize
-    serializer = LatexSerializer()
-    result = serializer.serialize(new_ast)
+    # Step 4: Build output by applying text-level changes to original source
+    result = _apply_changes_as_text(ast, new_ast, expanded, changes_list)
 
     # Step 5: Remove empty math
     if remove_empty:

@@ -22,7 +22,15 @@ class LatexSerializer:
         Needed when prev is an argumentless command ending with a letter
         and curr is a Text node starting with a letter, to prevent the
         command name from merging with the following text.
+        
+        Also handles Subscript/Superscript nodes whose content is a command
+        ending with a letter (e.g., c_\\delta N needs a space to prevent
+        \\deltaN from being parsed as a single command).
         """
+        # Unwrap Subscript/Superscript to check their content
+        if isinstance(prev, (Subscript, Superscript)):
+            prev = prev.content
+        
         if not isinstance(prev, Command):
             return False
         if prev.arguments or prev.optional_arguments:
@@ -146,9 +154,19 @@ class LatexSerializer:
 
         # Fallback: try to serialize children
         if hasattr(node, 'children') and node.children:
-            return ''.join(self._serialize_node(c) for c in node.children)
+            return self._serialize_children_with_spaces(node.children)
 
         return ''
+
+    def _serialize_children_with_spaces(self, children: list) -> str:
+        """Serialize a list of children, adding spaces between consecutive
+        nodes when needed to prevent command-name merging."""
+        parts = []
+        for i, child in enumerate(children):
+            if i > 0 and self._needs_space_before(children[i-1], child):
+                parts.append(' ')
+            parts.append(self._serialize_node(child))
+        return ''.join(parts)
 
     def _serialize_command(self, node: Command) -> str:
         parts = ['\\' + node.name]
@@ -170,7 +188,7 @@ class LatexSerializer:
         return '{' + inner + '}'
 
     def _serialize_optional_group(self, node: OptionalGroup) -> str:
-        inner = ''.join(self._serialize_node(c) for c in node.children)
+        inner = self._serialize_children_with_spaces(node.children)
         return '[' + inner + ']'
 
     def _serialize_environment(self, node: Environment) -> str:
@@ -179,8 +197,7 @@ class LatexSerializer:
             parts.append(self._serialize_node(opt))
         for arg in node.arguments:
             parts.append(self._serialize_node(arg))
-        for child in node.children:
-            parts.append(self._serialize_node(child))
+        parts.append(self._serialize_children_with_spaces(node.children))
         parts.append('\\end{' + node.name + '}')
         return ''.join(parts)
 
@@ -190,17 +207,16 @@ class LatexSerializer:
             parts.append(self._serialize_node(opt))
         for arg in node.arguments:
             parts.append(self._serialize_node(arg))
-        for child in node.children:
-            parts.append(self._serialize_node(child))
+        parts.append(self._serialize_children_with_spaces(node.children))
         parts.append('\\end{' + node.name + '}')
         return ''.join(parts)
 
     def _serialize_inline_math(self, node: InlineMath) -> str:
-        inner = ''.join(self._serialize_node(c) for c in node.children)
+        inner = self._serialize_children_with_spaces(node.children)
         return '$' + inner + '$'
 
     def _serialize_display_math(self, node: DisplayMath) -> str:
-        inner = ''.join(self._serialize_node(c) for c in node.children)
+        inner = self._serialize_children_with_spaces(node.children)
         if node.delimiter == '$$':
             return '$$' + inner + '$$'
         elif node.delimiter == '\\[\\]':
@@ -228,21 +244,18 @@ class LatexSerializer:
             parts.append(self._serialize_node(node.label))
         else:
             parts.append(' ')
-        for child in node.children:
-            parts.append(self._serialize_node(child))
+        parts.append(self._serialize_children_with_spaces(node.children))
         return ''.join(parts)
 
     def _serialize_float(self, node: Float) -> str:
         parts = ['\\begin{' + node.float_type + '}']
-        for child in node.children:
-            parts.append(self._serialize_node(child))
+        parts.append(self._serialize_children_with_spaces(node.children))
         parts.append('\\end{' + node.float_type + '}')
         return ''.join(parts)
 
     def _serialize_table(self, node: Table) -> str:
         parts = ['\\begin{tabular}{', node.alignment or '', '}']
-        for child in node.children:
-            parts.append(self._serialize_node(child))
+        parts.append(self._serialize_children_with_spaces(node.children))
         parts.append('\\end{tabular}')
         return ''.join(parts)
 
