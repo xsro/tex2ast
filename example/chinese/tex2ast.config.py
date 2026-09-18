@@ -11,10 +11,14 @@ changes1 = {
 
     # Inline changes commands configuration
     # Format: command_name:type (one per line)
-    'changes_list': '''
-# Custom changes commands
-cancel:deleted
-''',
+    'changes_list': """
+\\sG{old}
+\\tG{new}
+\\replaceG{new}{old}
+\\cancel{old}
+\\xcancel{old}
+\\cG{old}
+""",
 
     # Remove empty math environments
     'remove_empty_math': True,

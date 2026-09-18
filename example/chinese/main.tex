@@ -4,7 +4,14 @@
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{changes}
+\usepackage{cancel}
 \usepackage{hyperref}
+\usepackage[svgnames, x11names]{xcolor}
+
+\newcommand{\tG}{\textcolor{DarkGreen}}
+\definecolor{graygreen}{RGB}{102,152,126}
+\newcommand{\sG}[1]{\textcolor{graygreen}{\sout{#1}}}
+\newcommand{\cG}[1]{\textcolor{DarkGreen}{\cancel{#1}}}
 
 \geometry{margin=1in}
 
@@ -30,6 +37,12 @@
 \label{sec:discussion}
 
 我们在此讨论我们的发现。\deleted{旧的解释}不再有效。\added{新的解释}提供了更好的见解。
+
+理论博大精深
+\replaced{每个理论都很厉害 \sG{都厉害}\tG{很厉害} 厉害。
+我学习这些理论
+}{想变厉害}
+但是好难
 
 \section{结论}
 \label{sec:conclusion}
