@@ -9,9 +9,29 @@ class LatexSerializer:
     def serialize(self, ast: LatexAST) -> str:
         """Serialize AST to LaTeX string."""
         parts = []
-        for child in ast.children:
+        for i, child in enumerate(ast.children):
+            if i > 0 and self._needs_space_before(ast.children[i-1], child):
+                parts.append(' ')
             parts.append(self._serialize_node(child))
         return ''.join(parts)
+
+    @staticmethod
+    def _needs_space_before(prev: ASTNode, curr: ASTNode) -> bool:
+        """Check if a space is needed between two consecutive nodes.
+
+        Needed when prev is an argumentless command ending with a letter
+        and curr is a Text node starting with a letter, to prevent the
+        command name from merging with the following text.
+        """
+        if not isinstance(prev, Command):
+            return False
+        if prev.arguments or prev.optional_arguments:
+            return False
+        if not prev.name or not prev.name[-1].isalpha():
+            return False
+        if not isinstance(curr, Text):
+            return False
+        return bool(curr.content) and curr.content[0].isalpha()
 
     def _serialize_node(self, node: ASTNode) -> str:
         if node is None:
@@ -138,14 +158,15 @@ class LatexSerializer:
             parts.append(self._serialize_node(opt))
         for arg in node.arguments:
             parts.append(self._serialize_node(arg))
-        # Add a space after argumentless commands whose names end with a letter,
-        # to prevent the command name from merging with following text.
-        if not node.arguments and not node.optional_arguments and node.name and node.name[-1].isalpha():
-            parts.append(' ')
         return ''.join(parts)
 
     def _serialize_group(self, node: Group) -> str:
-        inner = ''.join(self._serialize_node(c) for c in node.children)
+        parts = []
+        for i, child in enumerate(node.children):
+            if i > 0 and self._needs_space_before(node.children[i-1], child):
+                parts.append(' ')
+            parts.append(self._serialize_node(child))
+        inner = ''.join(parts)
         return '{' + inner + '}'
 
     def _serialize_optional_group(self, node: OptionalGroup) -> str:
