@@ -49,6 +49,7 @@ diff document.tex document.tex  # identical!
 ### `tex2ast ast-remove-changes` - Strip changes package markup (AST-based)
 
 Same as `remove-changes` but uses AST transformation instead of regex for more robust processing.
+Supports multi-line arguments (e.g., `\replaced{new\nline}{old}`) and properly handles nested changes commands.
 
 ```bash
 tex2ast ast-remove-changes -i document.tex                  # → document_new.tex
@@ -83,6 +84,7 @@ tex2ast remove-changes --project tex2ast.config.py     # use project config file
 
 > **Note:** When a line is completely deleted (e.g., `\deleted{...}` occupies an entire line),
 > a `%` comment is left in its place to prevent LaTeX from merging paragraphs.
+> Multi-line arguments (e.g., `\replaced{new\nline}{old}`) are fully supported.
 
 | Command | default (new) | `--old` |
 |---------|---------------|---------|
