@@ -4,7 +4,9 @@
 \usepackage{graphicx}
 \usepackage{amsmath}
 \usepackage{amssymb}
+
 \usepackage{hyperref}
+\usepackage{cancel}
 
 \geometry{margin=1in}
 
@@ -18,6 +20,8 @@
 
 \begin{abstract}
 This is a sample abstract for a research paper. It demonstrates the use of the \texttt{changes} package for tracking revisions. The new findings suggest that this approach is effective for collaborative writing.
+b
+This is the end.
 \end{abstract}
 
 \section{Introduction}
@@ -47,7 +51,7 @@ We used the following equation:
 The old method produces better results.
 
 \subsection{Data Collection}
-Data was collected from multiple sources. The \cancel{invalid} entries were removed.
+Data was collected from multiple sources. The  entries were removed.
 
 \section{Results}
 \label{sec:results}
@@ -61,7 +65,7 @@ Our results are shown in Figure~\ref{fig:example}. The data indicates:
 
 \begin{figure}[h]
     \centering
-    \includegraphics[width=0.5\textwidth]{example.png}
+    % \includegraphics[width=0.5\textwidth]{example.png}
     \caption{Example figure}
     \label{fig:example}
 \end{figure}

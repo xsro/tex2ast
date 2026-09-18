@@ -78,7 +78,7 @@ def parse_changes_list(content: str) -> dict[str, str]:
     return result
 
 
-def _apply_changes_as_text(original_ast: LatexAST, new_ast: LatexAST, source_text: str, changes_list: dict[str, str] | None = None) -> str:
+def _apply_changes_as_text(original_ast: LatexAST, new_ast: LatexAST, source_text: str, changes_list: dict[str, str] | None = None, mode: str = 'new') -> str:
     """Build output by copying original source text, excluding removed changes parts.
 
     Walks the original AST to find changes commands and determines what text
@@ -117,16 +117,42 @@ def _apply_changes_as_text(original_ast: LatexAST, new_ast: LatexAST, source_tex
                 cmd_name = node.name
 
                 # Check if this is a changes command that should be processed
-                is_changes_cmd = cmd_name in ('added', 'deleted', 'replaced', 'comment')
+                is_changes_cmd = cmd_name in ('added', 'deleted', 'replaced', 'comment', 'highlight')
                 if changes_list and cmd_name in changes_list:
                     is_changes_cmd = True
 
                 if is_changes_cmd and in_document:
-                    if cmd_name == 'deleted' or cmd_name == 'comment':
+                    if cmd_name == 'deleted':
+                        if mode == 'new':
+                            # Remove entire command
+                            if node.pos:
+                                excluded_ranges.append((node.pos.start.offset, node.pos.end.offset))
+                        else:
+                            # Keep content, remove command and braces
+                            if node.arguments:
+                                arg = node.arguments[0]
+                                if isinstance(arg, Group) and node.pos and arg.pos:
+                                    excluded_ranges.append((node.pos.start.offset, arg.pos.start.offset + 1))
+                                    excluded_ranges.append((arg.pos.end.offset - 1, arg.pos.end.offset))
+
+                    elif cmd_name == 'comment':
                         if node.pos:
                             excluded_ranges.append((node.pos.start.offset, node.pos.end.offset))
 
                     elif cmd_name == 'added':
+                        if mode == 'new':
+                            # Keep content, remove command and braces
+                            if node.arguments:
+                                arg = node.arguments[0]
+                                if isinstance(arg, Group) and node.pos and arg.pos:
+                                    excluded_ranges.append((node.pos.start.offset, arg.pos.start.offset + 1))
+                                    excluded_ranges.append((arg.pos.end.offset - 1, arg.pos.end.offset))
+                        else:
+                            # Remove entire command
+                            if node.pos:
+                                excluded_ranges.append((node.pos.start.offset, node.pos.end.offset))
+
+                    elif cmd_name == 'highlight':
                         if node.arguments:
                             arg = node.arguments[0]
                             if isinstance(arg, Group) and node.pos and arg.pos:
@@ -138,11 +164,22 @@ def _apply_changes_as_text(original_ast: LatexAST, new_ast: LatexAST, source_tex
                             new_arg = node.arguments[0]
                             old_arg = node.arguments[1]
                             if isinstance(new_arg, Group) and isinstance(old_arg, Group) and node.pos and new_arg.pos and old_arg.pos:
-                                excluded_ranges.append((node.pos.start.offset, new_arg.pos.start.offset + 1))
-                                excluded_ranges.append((new_arg.pos.end.offset - 1, old_arg.pos.start.offset + 1))
-                                excluded_ranges.append((old_arg.pos.start.offset + 1, old_arg.pos.end.offset - 1))
-                                excluded_ranges.append((old_arg.pos.end.offset - 1, old_arg.pos.end.offset))
-
+                                if mode == 'new':
+                                    # Keep new (first arg), remove command, braces, and old content
+                                    excluded_ranges.append((node.pos.start.offset, new_arg.pos.start.offset + 1))
+                                    excluded_ranges.append((new_arg.pos.end.offset - 1, old_arg.pos.start.offset + 1))
+                                    excluded_ranges.append((old_arg.pos.start.offset + 1, old_arg.pos.end.offset - 1))
+                                    excluded_ranges.append((old_arg.pos.end.offset - 1, node.pos.end.offset))
+                                    # Also exclude trailing newline of first arg if present,
+                                    # to avoid blank lines when command is removed
+                                    if new_arg.pos.end.offset >= 2 and source_text[new_arg.pos.end.offset - 2] == '\n':
+                                        excluded_ranges.append((new_arg.pos.end.offset - 2, new_arg.pos.end.offset - 1))
+                                else:
+                                    # Keep old (second arg), remove command, braces, and new content
+                                    excluded_ranges.append((node.pos.start.offset, new_arg.pos.start.offset + 1))
+                                    excluded_ranges.append((new_arg.pos.start.offset + 1, new_arg.pos.end.offset - 1))
+                                    excluded_ranges.append((new_arg.pos.end.offset - 1, old_arg.pos.start.offset + 1))
+                                    excluded_ranges.append((old_arg.pos.end.offset - 1, node.pos.end.offset))
                     elif changes_list and cmd_name in changes_list:
                         cmd_type = changes_list[cmd_name]
                         if cmd_type == 'deleted':
@@ -159,10 +196,22 @@ def _apply_changes_as_text(original_ast: LatexAST, new_ast: LatexAST, source_tex
                                 new_arg = node.arguments[0]
                                 old_arg = node.arguments[1]
                                 if isinstance(new_arg, Group) and isinstance(old_arg, Group) and node.pos and new_arg.pos and old_arg.pos:
-                                    excluded_ranges.append((node.pos.start.offset, new_arg.pos.start.offset + 1))
-                                    excluded_ranges.append((new_arg.pos.end.offset - 1, old_arg.pos.start.offset + 1))
-                                    excluded_ranges.append((old_arg.pos.start.offset + 1, old_arg.pos.end.offset - 1))
-                                    excluded_ranges.append((old_arg.pos.end.offset - 1, old_arg.pos.end.offset))
+                                    if mode == 'new':
+                                        # Keep new (first arg), remove command, braces, and old content
+                                        excluded_ranges.append((node.pos.start.offset, new_arg.pos.start.offset + 1))
+                                        excluded_ranges.append((new_arg.pos.end.offset - 1, old_arg.pos.start.offset + 1))
+                                        excluded_ranges.append((old_arg.pos.start.offset + 1, old_arg.pos.end.offset - 1))
+                                        excluded_ranges.append((old_arg.pos.end.offset - 1, node.pos.end.offset))
+                                        # Also exclude trailing newline of first arg if present,
+                                        # to avoid blank lines when command is removed
+                                        if new_arg.pos.end.offset >= 2 and source_text[new_arg.pos.end.offset - 2] == '\n':
+                                            excluded_ranges.append((new_arg.pos.end.offset - 2, new_arg.pos.end.offset - 1))
+                                    else:
+                                        # Keep old (second arg), remove command, braces, and new content
+                                        excluded_ranges.append((node.pos.start.offset, new_arg.pos.start.offset + 1))
+                                        excluded_ranges.append((new_arg.pos.start.offset + 1, new_arg.pos.end.offset - 1))
+                                        excluded_ranges.append((new_arg.pos.end.offset - 1, old_arg.pos.start.offset + 1))
+                                        excluded_ranges.append((old_arg.pos.end.offset - 1, node.pos.end.offset))
 
                 # Recurse into arguments (always, to find nested changes commands)
                 for arg in node.arguments:
@@ -305,7 +354,7 @@ def ast_remove_changes(
     new_ast = transformer.transform(ast)
 
     # Step 4: Build output by applying text-level changes to original source
-    result = _apply_changes_as_text(ast, new_ast, expanded, changes_list)
+    result = _apply_changes_as_text(ast, new_ast, expanded, changes_list, mode)
 
     # Step 5: Remove empty math
     if remove_empty:

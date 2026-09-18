@@ -273,20 +273,35 @@ class LatexParser:
 
     def _parse_regular_command(self, cmd_name: str, start: SourcePos) -> Command:
         star = False
-        self._skip_spaces()
+        self._skip_spaces_and_newlines()
         if self._current().type == TokenType.TEXT and self._current().value == '*':
             self._advance()
             star = True
 
         required_args = []
 
-        self._skip_spaces()
+        self._skip_spaces_and_newlines()
         while self._current().type == TokenType.OPEN_BRACE:
-            required_args.append(self._parse_group())
+            group = self._parse_group()
+            required_args.append(group)
+            # Skip whitespace to find next argument, but preserve trailing newlines
+            pos_before_skip = self.pos
+            self._skip_spaces_and_newlines()
+            if self._current().type != TokenType.OPEN_BRACE:
+                # No more arguments, restore position to preserve trailing whitespace
+                self.pos = pos_before_skip
+                break
+
+        # Determine end position: use the end of the last argument if available,
+        # otherwise the current position
+        if required_args:
+            end_pos = required_args[-1].pos.end
+        else:
+            end_pos = self._cur_pos()
 
         return Command(name=cmd_name, arguments=required_args,
                        optional_arguments=[], star=star,
-                       pos=self._make_range(start))
+                       pos=SourceRange(start=start, end=end_pos))
 
     def _parse_section(self, cmd_name: str, start: SourcePos) -> Section:
         star = False
