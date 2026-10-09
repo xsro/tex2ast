@@ -343,3 +343,87 @@ class TestAstRemoveChangesFunction:
         result = ast_remove_changes(tex_file, "old")
         assert "old" in result
         assert "\\deleted" not in result
+
+
+class TestParseChangesListKinds:
+    """Test parsing of environment/region specs by parse_changes_list."""
+
+    def test_parse_environment(self):
+        result = parse_changes_list("\\begin{tcolorbox}old\\end{tcolorbox}")
+        assert result == {}
+        assert "tcolorbox" in result.environments
+        assert result.environments["tcolorbox"]["type"] == "deleted"
+
+    def test_parse_region(self):
+        result = parse_changes_list("\\color{blue}new\\end{black}")
+        assert result == {}
+        assert "\\color{blue}" in result.regions
+        assert result.regions["\\color{blue}"]["type"] == "added"
+
+    def test_env_region_only_config_is_truthy(self):
+        """A config with only env/region specs must survive ``specs or {}``."""
+        result = parse_changes_list("\\begin{tcolorbox}old\\end{tcolorbox}")
+        assert bool(result) is True
+
+    def test_mixed_specs(self):
+        result = parse_changes_list(
+            "\\sG{old}\n\\begin{tcolorbox}old\\end{tcolorbox}\n"
+            "\\color{blue}new\\end{black}\n"
+        )
+        assert result["sG"] == "deleted"
+        assert "tcolorbox" in result.environments
+        assert "\\color{blue}" in result.regions
+
+
+class TestEnvironmentAndRegionTransformation:
+    """Test AST transformation of environment/region revision markup."""
+
+    SPECS = parse_changes_list(
+        "\\begin{tcolorbox}old\\end{tcolorbox}\n"
+        "\\color{blue}new\\end{black}\n"
+    )
+
+    DOC = (
+        "\\begin{document}\n"
+        "\\begin{tcolorbox}\nboxed\n\\end{tcolorbox}\n"
+        "\\color{blue}\ncolored\n\\color{black}\n"
+        "\\end{document}"
+    )
+
+    def test_environment_deleted_new_mode(self):
+        result = process_ast(self.DOC, "new", self.SPECS)
+        assert "boxed" not in result
+        assert "\\begin{tcolorbox}" not in result
+
+    def test_environment_deleted_old_mode(self):
+        result = process_ast(self.DOC, "old", self.SPECS)
+        assert "boxed" in result
+        assert "\\begin{tcolorbox}" not in result
+        assert "\\end{tcolorbox}" not in result
+
+    def test_region_added_new_mode(self):
+        result = process_ast(self.DOC, "new", self.SPECS)
+        assert "colored" in result
+        assert "\\color{blue}" not in result
+        assert "\\color{black}" not in result
+
+    def test_region_added_old_mode(self):
+        result = process_ast(self.DOC, "old", self.SPECS)
+        assert "colored" not in result
+
+    def test_ast_remove_changes_with_env_and_region(self, tmp_path):
+        """Full file pipeline (range-based output) handles env/region markup."""
+        tex_file = tmp_path / "test.tex"
+        tex_file.write_text(self.DOC)
+
+        new_result = ast_remove_changes(tex_file, "new", changes_list=self.SPECS)
+        assert "boxed" not in new_result
+        assert "\\begin{tcolorbox}" not in new_result
+        assert "colored" in new_result
+        assert "\\color{blue}" not in new_result
+        assert "\\color{black}" not in new_result
+
+        old_result = ast_remove_changes(tex_file, "old", changes_list=self.SPECS)
+        assert "boxed" in old_result
+        assert "\\begin{tcolorbox}" not in old_result
+        assert "colored" not in old_result

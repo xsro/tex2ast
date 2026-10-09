@@ -4,7 +4,7 @@ import pytest
 from pathlib import Path
 from tex2ast.remove_changes import (
     process_changes, expand_and_remove_changes,
-    get_changes_commands, parse_changes_config,
+    get_changes_commands, parse_changes_config, parse_change_specs,
     _find_matching_brace, _skip_optional_arg,
     _extract_brace_content, _is_full_line_delete,
     _remove_usepackage_changes, _remove_empty_math,
@@ -240,3 +240,92 @@ class TestBuiltinDefaults:
         cmd = next(c for c in BUILTIN_DEFAULT_COMMANDS if c['name'] == '\\cancel')
         assert cmd['has_old'] is True
         assert cmd['has_new'] is False
+
+
+class TestEnvironmentAndRegionSpecs:
+    """Test parsing of environment and region revision commands."""
+
+    def test_parse_environment_deleted(self):
+        specs = parse_change_specs("\\begin{tcolorbox}old\\end{tcolorbox}")
+        assert specs == [{
+            'kind': 'environment',
+            'name': 'tcolorbox',
+            'type': 'deleted',
+            'has_new': False,
+            'has_old': True,
+        }]
+
+    def test_parse_region_added(self):
+        specs = parse_change_specs("\\color{blue}new\\end{black}")
+        assert len(specs) == 1
+        spec = specs[0]
+        assert spec['kind'] == 'region'
+        assert spec['start'] == '\\color{blue}'
+        assert spec['end'] == '\\end{black}'
+        assert spec['type'] == 'added'
+
+    def test_parse_mixed_with_commands(self):
+        specs = parse_change_specs(
+            "\\sG{old}\n\\tG{new}\n"
+            "\\begin{tcolorbox}old\\end{tcolorbox}\n"
+            "\\color{blue}new\\end{black}\n"
+        )
+        kinds = [s['kind'] for s in specs]
+        assert kinds == ['command', 'command', 'environment', 'region']
+
+    def test_command_form_not_misparsed_as_region(self):
+        specs = parse_change_specs("\\tG{new}")
+        assert specs[0]['kind'] == 'command'
+        assert specs[0]['name'] == '\\tG'
+
+
+class TestEnvironmentAndRegionProcessing:
+    """Test text-level processing of environment/region revision markup."""
+
+    SPECS = parse_change_specs(
+        "\\begin{tcolorbox}old\\end{tcolorbox}\n"
+        "\\color{blue}new\\end{black}\n"
+    )
+
+    def test_environment_deleted_new_mode(self):
+        text = "\\begin{document}A\n\\begin{tcolorbox}\nboxed\n\\end{tcolorbox}\nB\\end{document}"
+        result = process_changes(text, "new", self.SPECS)
+        assert "boxed" not in result
+        assert "\\begin{tcolorbox}" not in result
+        assert "A" in result and "B" in result
+
+    def test_environment_deleted_old_mode(self):
+        text = "\\begin{document}A\n\\begin{tcolorbox}\nboxed\n\\end{tcolorbox}\nB\\end{document}"
+        result = process_changes(text, "old", self.SPECS)
+        assert "boxed" in result
+        assert "\\begin{tcolorbox}" not in result
+        assert "\\end{tcolorbox}" not in result
+
+    def test_environment_keeps_nested_changes(self):
+        text = (
+            "\\begin{document}"
+            "\\begin{tcolorbox}\\added{kept}\\end{tcolorbox}"
+            "\\end{document}"
+        )
+        result = process_changes(text, "old", self.SPECS)
+        assert "\\added" not in result
+        assert "kept" not in result
+
+    def test_region_added_new_mode(self):
+        text = "\\begin{document}\\color{blue}\ncolored\n\\color{black}\n\\end{document}"
+        result = process_changes(text, "new", self.SPECS)
+        assert "colored" in result
+        assert "\\color{blue}" not in result
+        assert "\\color{black}" not in result
+
+    def test_region_added_old_mode(self):
+        text = "\\begin{document}\\color{blue}\ncolored\n\\color{black}\n\\end{document}"
+        result = process_changes(text, "old", self.SPECS)
+        assert "colored" not in result
+        assert "\\color{blue}" not in result
+
+    def test_region_deleted_types(self):
+        specs = parse_change_specs("\\color{red}old\\end{black}")
+        text = "\\begin{document}\\color{red}\ndoomed\n\\color{black}\n\\end{document}"
+        assert "doomed" not in process_changes(text, "new", specs)
+        assert "doomed" in process_changes(text, "old", specs)

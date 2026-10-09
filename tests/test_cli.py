@@ -179,6 +179,37 @@ class TestAstRemoveChangesCommand:
         assert result.exit_code == 0
         assert (tmp_path / "out.tex").exists()
 
+    def test_ast_remove_changes_env_and_region_config(self, tmp_path):
+        """Environment/region markup from an inline project config."""
+        tex_file = tmp_path / "test.tex"
+        tex_file.write_text(
+            "\\begin{document}\n"
+            "\\begin{tcolorbox}\nboxed\n\\end{tcolorbox}\n"
+            "\\color{blue}\ncolored\n\\color{black}\n"
+            "\\end{document}"
+        )
+        out_file = tmp_path / "out.tex"
+        config_file = tmp_path / "config.py"
+        config_file.write_text(
+            "tex2ast_config = {\n"
+            "  'ast-remove-changes': {\n"
+            "    'input_tex': " + repr(str(tex_file)) + ",\n"
+            "    'output_tex': " + repr(str(out_file)) + ",\n"
+            "    'changes_list': r\"\"\"\\begin{tcolorbox}old\\end{tcolorbox}\n\\color{blue}new\\end{black}\n\"\"\",\n"
+            "  }\n"
+            "}\n"
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ['ast-remove-changes', '--project', str(config_file)])
+
+        assert result.exit_code == 0
+        content = out_file.read_text()
+        assert "boxed" not in content
+        assert "colored" in content
+        assert "\\color{blue}" not in content
+        assert "\\color{black}" not in content
+
 
 class TestDependencyCommand:
     """Test the dependency command."""

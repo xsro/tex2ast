@@ -20,60 +20,85 @@ from .ast_nodes import (
     Table, TableRow, TableCell, Superscript, Subscript,
 )
 from .expand import expand_latex
-from .remove_changes import _remove_empty_math
+from .remove_changes import _remove_empty_math, _spec_keeps_content, parse_change_specs
 
 
-def parse_changes_list(content: str) -> dict[str, str]:
-    """Parse changes list content into a dict mapping command names to types.
+class ParsedChanges(dict):
+    """Mapping of command name -> change type plus environment/region specs.
+
+    Behaves like the plain ``dict`` returned before environment and region
+    markup were supported, so existing callers keep working. Additional
+    markup kinds are exposed via the ``environments`` and ``regions``
+    attributes (both name/marker -> spec dicts).
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.environments: dict[str, dict] = {}
+        self.regions: dict[str, dict] = {}
+
+    def __bool__(self) -> bool:
+        # Dict is empty when a config only defines environment/region markup,
+        # so truthiness must also consider those specs (callers may use
+        # ``changes or {}``).
+        return bool(dict.__len__(self)) or bool(self.environments) or bool(self.regions)
+
+
+def _normalize_changes(changes) -> ParsedChanges:
+    """Coerce a plain command dict or ParsedChanges into ParsedChanges."""
+    if isinstance(changes, ParsedChanges):
+        return changes
+    parsed = ParsedChanges()
+    if changes:
+        parsed.update(changes)
+    return parsed
+
+
+def _command_source_marker(node: ASTNode) -> str | None:
+    r"""Reconstruct a simple marker string from a command node.
+
+    ``\color{blue}`` is represented as ``Command('color', [Group([Text('blue')])])``
+    and is reconstructed as ``'\\color{blue}'``. Returns None when the command
+    has no plain-text arguments (only simple markers are supported).
+    """
+    if not isinstance(node, Command):
+        return None
+    parts = ['\\' + node.name]
+    for arg in node.arguments:
+        if (isinstance(arg, Group) and len(arg.children) == 1
+                and isinstance(arg.children[0], Text)):
+            parts.append('{' + arg.children[0].content + '}')
+        else:
+            return None
+    return ''.join(parts)
+
+
+def parse_changes_list(content: str) -> ParsedChanges:
+    """Parse changes list content into a map of change specs.
 
     Uses the same format as remove-changes:
     \\command{old}     - delete content
     \\command{new}     - keep content
     \\command{new}{old} - replace (keep new, delete old)
+    \\begin{env}old\\end{env} - environment markup
+    \\color{blue}new\\end{black} - region markup
 
     Returns:
-        Dict mapping command names (without backslash) to types:
-        'added', 'deleted', 'replaced'
+        ParsedChanges mapping command names (without backslash) to types
+        ('added', 'deleted', 'replaced'), with environment and region specs
+        available as attributes.
     """
-    result = {}
+    result = ParsedChanges()
 
-    for line in content.splitlines():
-        # Strip inline comments
-        line = line.split('#')[0].strip()
-        if not line:
-            continue
-
-        # Must start with backslash
-        if not line.startswith('\\'):
-            continue
-
-        # Determine behavior based on placeholders
-        has_new = '{new}' in line
-        has_old = '{old}' in line
-
-        if not has_new and not has_old:
-            continue
-
-        # Extract command name (everything before first {, [, or whitespace)
-        cmd_end = len(line)
-        for i, ch in enumerate(line):
-            if ch in '{[' or ch.isspace():
-                cmd_end = i
-                break
-
-        cmd_name = line[:cmd_end]
-        if not cmd_name.startswith('\\'):
-            continue
-
-        # Strip backslash for the dict key
-        name = cmd_name[1:] if cmd_name.startswith('\\') else cmd_name
-
-        if has_new and has_old:
-            result[name] = 'replaced'
-        elif has_new:
-            result[name] = 'added'
-        elif has_old:
-            result[name] = 'deleted'
+    for spec in parse_change_specs(content):
+        kind = spec.get('kind', 'command')
+        if kind == 'command':
+            name = spec['name'][1:] if spec['name'].startswith('\\') else spec['name']
+            result[name] = spec['type']
+        elif kind == 'environment':
+            result.environments[spec['name']] = spec
+        elif kind == 'region':
+            result.regions[spec['start']] = spec
 
     return result
 
@@ -97,6 +122,12 @@ def _apply_changes_as_text(original_ast: LatexAST, new_ast: LatexAST, source_tex
     # Collect ranges of text that should be excluded (removed changes command parts)
     excluded_ranges = []
 
+    # Normalize custom specs and expose environment/region definitions
+    parsed_changes = _normalize_changes(changes_list)
+    changes_list = parsed_changes
+    env_specs = parsed_changes.environments
+    region_specs = parsed_changes.regions
+
     # Find document environment and title in the original AST
     document_env = None
     title_cmd = None
@@ -112,7 +143,28 @@ def _apply_changes_as_text(original_ast: LatexAST, new_ast: LatexAST, source_tex
         Only processes changes commands inside the document environment or title,
         matching the behavior of ChangesTransformer.
         """
-        for node in nodes:
+        for node_index, node in enumerate(nodes):
+            # Region markup (e.g. \color{blue} ... \color{black})
+            marker = _command_source_marker(node)
+            if marker is not None and marker in region_specs and in_document and node.pos:
+                spec = region_specs[marker]
+                terminator = None
+                for other in nodes[node_index + 1:]:
+                    if isinstance(other, Command) and other.name == node.name:
+                        terminator = other
+                        break
+                term_end = (terminator.pos.end.offset
+                            if terminator is not None and terminator.pos
+                            else node.pos.end.offset)
+                if _spec_keeps_content(spec, mode):
+                    # Keep content: drop only the opening and closing markers
+                    excluded_ranges.append((node.pos.start.offset, node.pos.end.offset))
+                    if terminator is not None and terminator.pos:
+                        excluded_ranges.append((terminator.pos.start.offset, terminator.pos.end.offset))
+                else:
+                    # Drop the whole region, content included
+                    excluded_ranges.append((node.pos.start.offset, term_end))
+
             if isinstance(node, Command):
                 cmd_name = node.name
 
@@ -226,9 +278,23 @@ def _apply_changes_as_text(original_ast: LatexAST, new_ast: LatexAST, source_tex
             elif isinstance(node, Group):
                 collect_excluded_ranges(node.children, in_document)
             elif isinstance(node, Environment):
-                # Only process if inside document or this IS the document environment
-                is_doc = in_document or (document_env and node is document_env)
-                collect_excluded_ranges(node.children, is_doc)
+                if node.name in env_specs and in_document and node.pos:
+                    spec = env_specs[node.name]
+                    if _spec_keeps_content(spec, mode):
+                        # Keep content, drop the \begin/\end wrapper
+                        if node.children and node.children[0].pos and node.children[-1].pos:
+                            excluded_ranges.append((node.pos.start.offset, node.children[0].pos.start.offset))
+                            excluded_ranges.append((node.children[-1].pos.end.offset, node.pos.end.offset))
+                        else:
+                            excluded_ranges.append((node.pos.start.offset, node.pos.end.offset))
+                        collect_excluded_ranges(node.children, in_document)
+                    else:
+                        # Drop the whole environment
+                        excluded_ranges.append((node.pos.start.offset, node.pos.end.offset))
+                else:
+                    # Only process if inside document or this IS the document environment
+                    is_doc = in_document or (document_env and node is document_env)
+                    collect_excluded_ranges(node.children, is_doc)
             elif isinstance(node, MathEnvironment):
                 is_doc = in_document or (document_env and node is document_env)
                 collect_excluded_ranges(node.children, is_doc)
@@ -350,11 +416,12 @@ def ast_remove_changes(
     ast.source = expanded
 
     # Step 3: Transform AST
-    transformer = ChangesTransformer(mode, changes_list or {}, expanded)
+    parsed_changes = _normalize_changes(changes_list)
+    transformer = ChangesTransformer(mode, parsed_changes, expanded)
     new_ast = transformer.transform(ast)
 
     # Step 4: Build output by applying text-level changes to original source
-    result = _apply_changes_as_text(ast, new_ast, expanded, changes_list, mode)
+    result = _apply_changes_as_text(ast, new_ast, expanded, parsed_changes, mode)
 
     # Step 5: Remove empty math
     if remove_empty:
@@ -375,7 +442,9 @@ class ChangesTransformer:
 
     def __init__(self, mode: str, changes_list: dict[str, str], source_text: str):
         self.mode = mode
-        self.changes_list = changes_list
+        self.changes_list = _normalize_changes(changes_list)
+        self.env_specs = self.changes_list.environments
+        self.region_specs = self.changes_list.regions
         self.source_text = source_text
 
     def transform(self, ast: LatexAST) -> LatexAST:
@@ -422,11 +491,41 @@ class ChangesTransformer:
         )]
 
     def _transform_children(self, children: list[ASTNode]) -> list[ASTNode]:
-        """Transform a list of children, flattening results."""
+        """Transform a list of children, flattening results.
+
+        Region markup (e.g. ``\\color{blue} ... \\color{black}``) is handled
+        here because it spans several sibling nodes.
+        """
         result = []
-        for child in children:
+        i = 0
+        n = len(children)
+        while i < n:
+            child = children[i]
+            marker = _command_source_marker(child)
+            if marker is not None and marker in self.region_specs:
+                spec = self.region_specs[marker]
+                end_index = self._find_region_end(children, i + 1, child.name)
+                if end_index is None:
+                    content = children[i + 1:]
+                    next_index = n
+                else:
+                    content = children[i + 1:end_index]
+                    next_index = end_index + 1
+                if _spec_keeps_content(spec, self.mode):
+                    result.extend(self._transform_children(content))
+                i = next_index
+                continue
             result.extend(self._transform_node(child))
+            i += 1
         return result
+
+    def _find_region_end(self, children: list[ASTNode], start: int, cmd_name: str) -> int | None:
+        """Index of the next command with *cmd_name* after *start*, or None."""
+        for i in range(start, len(children)):
+            node = children[i]
+            if isinstance(node, Command) and node.name == cmd_name:
+                return i
+        return None
 
     def _transform_node(self, node: ASTNode) -> list[ASTNode]:
         """Transform a single node. Returns a list of replacement nodes."""
@@ -440,6 +539,12 @@ class ChangesTransformer:
             new_children = self._transform_children(node.children)
             return [OptionalGroup(new_children, pos=node.pos)]
         elif isinstance(node, Environment):
+            if node.name in self.env_specs:
+                spec = self.env_specs[node.name]
+                if _spec_keeps_content(spec, self.mode):
+                    # Keep the content but drop the \begin/\end wrapper
+                    return self._transform_children(node.children)
+                return []
             new_children = self._transform_children(node.children)
             return [Environment(
                 name=node.name,

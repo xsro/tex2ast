@@ -18,6 +18,8 @@ changes1 = {
 \\cancel{old}
 \\xcancel{old}
 \\cG{old}
+\\begin{tcolorbox}old\\end{tcolorbox}
+\\color{blue}new\\end{black}
 """,
 
     # Remove empty math environments

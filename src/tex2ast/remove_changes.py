@@ -15,11 +15,11 @@ from typing import Optional
 
 # Built-in default commands (used if config file not found)
 BUILTIN_DEFAULT_COMMANDS = [
-    {'name': '\\cancel', 'has_new': False, 'has_old': True},
-    {'name': '\\xcancel', 'has_new': False, 'has_old': True},
-    {'name': '\\sG', 'has_new': False, 'has_old': True},
-    {'name': '\\tG', 'has_new': True, 'has_old': False},
-    {'name': '\\replaceG', 'has_new': True, 'has_old': True},
+    {'kind': 'command', 'name': '\\cancel', 'has_new': False, 'has_old': True},
+    {'kind': 'command', 'name': '\\xcancel', 'has_new': False, 'has_old': True},
+    {'kind': 'command', 'name': '\\sG', 'has_new': False, 'has_old': True},
+    {'kind': 'command', 'name': '\\tG', 'has_new': True, 'has_old': False},
+    {'kind': 'command', 'name': '\\replaceG', 'has_new': True, 'has_old': True},
 ]
 
 
@@ -48,40 +48,81 @@ def get_default_config_path() -> Optional[Path]:
     return None
 
 
-def parse_changes_config(config_path: Path) -> list[dict]:
-    """Parse a remove-changes config file.
+def _placeholder_type(value: str) -> Optional[str]:
+    """Map a placeholder token to a change type.
 
-    Format:
-    # Comments start with #
-    \\command{old}     - delete content
-    \\command{new}     - keep content
-    \\command{new}{old} - replace (keep new, delete old)
-
-    Returns:
-        List of command specs with 'name', 'has_new', 'has_old'
+    'old' / '{old}' -> 'deleted', 'new' / '{new}' -> 'added', otherwise None.
     """
-    commands = []
+    value = value.strip()
+    if value in ('old', '{old}'):
+        return 'deleted'
+    if value in ('new', '{new}'):
+        return 'added'
+    return None
 
-    if config_path is None or not config_path.exists():
-        return commands
 
-    content = config_path.read_text(encoding='utf-8')
+def _spec_keeps_content(spec: dict, mode: str) -> bool:
+    """Return True when a change spec keeps its content in the given mode.
 
-    for line in content.splitlines():
+    'added' content is kept in new mode, 'deleted' content in old mode.
+    Works for command, environment and region specs.
+    """
+    ctype = spec.get('type')
+    if ctype is None:
+        has_new = spec.get('has_new', False)
+        has_old = spec.get('has_old', False)
+        if has_new and not has_old:
+            ctype = 'added'
+        elif has_old and not has_new:
+            ctype = 'deleted'
+        else:
+            ctype = 'replaced'
+    if ctype == 'added':
+        return mode == 'new'
+    if ctype == 'deleted':
+        return mode == 'old'
+    # 'replaced' keeps content in both modes (only the losing side is dropped).
+    return True
+
+
+def parse_change_specs(content: str) -> list[dict]:
+    """Parse a changes config into a list of change specs.
+
+    Supported forms (comments start with #):
+
+        \\command{old}                      - delete the argument content
+        \\command{new}                      - keep the argument content
+        \\command{new}{old}                  - replace (keep new, drop old)
+        \\begin{env}old\\end{env}             - environment revision markup
+        \\color{blue}new\\end{black}          - region opened by a marker
+
+    Each returned spec is a dict with at least 'kind' ('command',
+    'environment' or 'region'), 'type' ('added'/'deleted'/'replaced') and
+    'has_new'/'has_old'. Command specs also have 'name'; environment specs
+    have 'name' (the environment name); region specs have 'start' (the
+    opening marker) and 'end' (the descriptive closing marker).
+    """
+    specs: list[dict] = []
+
+    for raw_line in content.splitlines():
         # Strip inline comments
-        line = line.split('#')[0].strip()
-        if not line:
+        line = raw_line.split('#')[0].strip()
+        if not line or not line.startswith('\\'):
             continue
 
-        # Must start with backslash
-        if not line.startswith('\\'):
-            continue
-
-        # Determine behavior based on placeholders
-        has_new = '{new}' in line
-        has_old = '{old}' in line
-
-        if not has_new and not has_old:
+        # Environment form: \begin{env}...\end{env}
+        env_match = re.match(r'^\\begin\{([^}]+)\}(.*)\\end\{\1\}\s*$', line)
+        if env_match:
+            ptype = _placeholder_type(env_match.group(2))
+            if ptype is None:
+                continue
+            specs.append({
+                'kind': 'environment',
+                'name': env_match.group(1),
+                'type': ptype,
+                'has_new': ptype == 'added',
+                'has_old': ptype == 'deleted',
+            })
             continue
 
         # Extract command name (everything before first {, [, or whitespace)
@@ -95,13 +136,96 @@ def parse_changes_config(config_path: Path) -> list[dict]:
         if not cmd_name.startswith('\\'):
             continue
 
-        commands.append({
-            'name': cmd_name,
-            'has_new': has_new,
-            'has_old': has_old,
+        rest = line[cmd_end:]
+
+        # Skip optional [...] arguments
+        while rest.startswith('['):
+            skipped = _skip_optional_arg(rest, 0)
+            if skipped == 0:
+                break
+            rest = rest[skipped:]
+
+        # Command form: the first brace group is the placeholder
+        if re.match(r'^\{\s*(old|new)\s*\}', rest):
+            has_new = '{new}' in line
+            has_old = '{old}' in line
+            if has_new and has_old:
+                ctype = 'replaced'
+            elif has_new:
+                ctype = 'added'
+            else:
+                ctype = 'deleted'
+            specs.append({
+                'kind': 'command',
+                'name': cmd_name,
+                'type': ctype,
+                'has_new': has_new,
+                'has_old': has_old,
+            })
+            continue
+
+        # Region form: <start marker><placeholder><end marker>
+        start_marker = cmd_name
+        remainder = rest
+        literal_args = 0
+        placeholder = None
+
+        while remainder.startswith('{'):
+            close = _find_matching_brace(remainder, 0)
+            if close == -1:
+                break
+            inner = remainder[1:close].strip()
+            if inner in ('old', 'new'):
+                placeholder = inner
+                remainder = remainder[close + 1:]
+                break
+            start_marker += remainder[:close + 1]
+            literal_args += 1
+            remainder = remainder[close + 1:]
+
+        if placeholder is None:
+            bare = re.match(r'\s*(old|new)\b', remainder)
+            if bare:
+                placeholder = bare.group(1)
+                remainder = remainder[bare.end():]
+
+        # A region needs a literal opening marker such as \color{blue}
+        if placeholder is None or literal_args == 0:
+            continue
+
+        ptype = _placeholder_type(placeholder)
+        specs.append({
+            'kind': 'region',
+            'name': start_marker,
+            'start': start_marker,
+            'end': remainder.strip(),
+            'type': ptype,
+            'has_new': ptype == 'added',
+            'has_old': ptype == 'deleted',
         })
 
-    return commands
+    return specs
+
+
+def parse_changes_config(config_path: Path) -> list[dict]:
+    """Parse a remove-changes config file.
+
+    Format:
+    # Comments start with #
+    \\command{old}              - delete content
+    \\command{new}              - keep content
+    \\command{new}{old}          - replace (keep new, delete old)
+    \\begin{env}old\\end{env}     - environment revision markup
+    \\color{blue}new\\end{black}  - region revision markup
+
+    Returns:
+        List of change specs (see parse_change_specs).
+    """
+    if config_path is None or not config_path.exists():
+        return []
+
+    content = config_path.read_text(encoding='utf-8')
+    return parse_change_specs(content)
 
 
 def get_changes_commands(config_path: str | None = None) -> list[dict]:
@@ -131,6 +255,52 @@ def get_changes_commands(config_path: str | None = None) -> list[dict]:
         if not path.exists():
             raise FileNotFoundError(f"Config file not found: {config_path}")
         return parse_changes_config(path)
+
+def _find_env_end(text: str, start: int, env_name: str) -> int:
+    """Find the offset just after the matching \\end{env} for an environment.
+
+    Handles nesting of the same environment. Returns -1 if not found.
+    """
+    begin = '\\begin{' + env_name + '}'
+    end = '\\end{' + env_name + '}'
+    depth = 0
+    i = start
+    while i < len(text):
+        if text.startswith(begin, i):
+            depth += 1
+            i += len(begin)
+        elif text.startswith(end, i):
+            depth -= 1
+            i += len(end)
+            if depth == 0:
+                return i
+        else:
+            i += 1
+    return -1
+
+
+def _find_region_terminator(text: str, start: int, base_cmd: str) -> tuple[int, int] | None:
+    """Find the next marker starting with *base_cmd* at/after *start*.
+
+    A region such as ``\\color{blue}`` is closed by the next switch of the
+    same command, e.g. ``\\color{black}``. Returns ``(marker_start,
+    marker_end)`` where *marker_end* is the offset just after the marker
+    arguments, or None when no terminator is found.
+    """
+    pattern = re.compile(re.escape(base_cmd) + r'(?![A-Za-z])')
+    match = pattern.search(text, start)
+    if not match:
+        return None
+
+    pos = _skip_optional_arg(text, match.end())
+    while pos < len(text) and text[pos] == '{':
+        close = _find_matching_brace(text, pos)
+        if close == -1:
+            break
+        pos = close + 1
+
+    return (match.start(), pos)
+
 
 def _find_matching_brace(text: str, start: int) -> int:
     """Find the position of the matching closing brace.
@@ -301,10 +471,56 @@ def _process_changes_unconditional(text: str, mode: str, custom_commands: list[d
     # Standard changes commands
     standard_commands = ['\\added', '\\deleted', '\\replaced', '\\comment', '\\highlight']
 
-    # Build list of all commands to check
-    custom_names = [cmd['name'] for cmd in (custom_commands or [])]
+    # Split custom specs by kind so environment/region markers are not
+    # mistaken for brace commands.
+    all_specs = custom_commands or []
+    custom_names = [cmd['name'] for cmd in all_specs if cmd.get('kind', 'command') == 'command']
+    env_specs = {cmd['name']: cmd for cmd in all_specs if cmd.get('kind') == 'environment'}
+    region_specs = {cmd['start']: cmd for cmd in all_specs if cmd.get('kind') == 'region'}
 
     while i < len(text):
+        # Environment revision markup: \begin{env}...\end{env}
+        env_handled = False
+        for env_name, env_spec in env_specs.items():
+            begin = '\\begin{' + env_name + '}'
+            if not text.startswith(begin, i):
+                continue
+            env_end = _find_env_end(text, i, env_name)
+            if env_end == -1:
+                break
+            content_start = i + len(begin)
+            content_end = env_end - len('\\end{' + env_name + '}')
+            if _spec_keeps_content(env_spec, mode):
+                result.append(_process_changes_unconditional(
+                    text[content_start:content_end], mode, custom_commands))
+            i = env_end
+            env_handled = True
+            break
+        if env_handled:
+            continue
+
+        # Region revision markup: \color{blue} ... \color{black}
+        region_handled = False
+        for start_marker, region_spec in region_specs.items():
+            if not text.startswith(start_marker, i):
+                continue
+            content_start = i + len(start_marker)
+            base_cmd = start_marker[:start_marker.index('{')] if '{' in start_marker else start_marker
+            terminator = _find_region_terminator(text, content_start, base_cmd)
+            if terminator is None:
+                content_end = len(text)
+                i_after = len(text)
+            else:
+                content_end, i_after = terminator
+            if _spec_keeps_content(region_spec, mode):
+                result.append(_process_changes_unconditional(
+                    text[content_start:content_end], mode, custom_commands))
+            i = i_after
+            region_handled = True
+            break
+        if region_handled:
+            continue
+
         # Check for any command
         cmd_match = None
         for cmd in standard_commands + custom_names:

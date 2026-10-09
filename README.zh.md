@@ -112,6 +112,22 @@ tex2ast remove-changes --project tex2ast.config.py     # 使用项目配置文�
 \replaceG{new}{old}
 ```
 
+还支持两种“区域式”标记，用于非大括号形式的修订：
+
+- `\begin{env}old\end{env}` —— 环境式标记。新版本中整个环境被移除；
+  旧版本中仅去掉 `\begin{env}`/`\end{env}` 外壳并保留内容
+  （写成 `new` 则行为相反）。
+- `\color{blue}new\end{black}` —— 区域式标记，由起始标记开启，
+  并由同一命令的下一个切换（如 `\color{black}`）关闭。新版本中去掉
+  标记并保留内容；旧版本中整个区域被移除（写成 `old` 则行为相反）。
+
+示例：
+
+```text
+\begin{tcolorbox}old\end{tcolorbox}
+\color{blue}new\end{black}
+```
+
 #### 项目配置文件
 
 `tex2ast.config.py` 文件可定义项目级设置：

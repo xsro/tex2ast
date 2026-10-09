@@ -112,6 +112,24 @@ Default commands:
 \replaceG{new}{old}
 ```
 
+Two region-style markers are also supported, for markup that is not a
+brace command:
+
+- `\begin{env}old\end{env}` — environment markup. In new mode the whole
+  environment is removed; in old mode the `\begin{env}`/`\end{env}` wrapper
+  is stripped and the content is kept (use `new` to reverse this).
+- `\color{blue}new\end{black}` — region markup opened by a marker and closed
+  by the next switch of the same command (e.g. `\color{black}`). In new mode
+  the markers are dropped and the content is kept; in old mode the whole
+  region is removed (use `old` to reverse this).
+
+Example:
+
+```text
+\begin{tcolorbox}old\end{tcolorbox}
+\color{blue}new\end{black}
+```
+
 #### Project config file
 
 A `tex2ast.config.py` file can define project-level settings:
